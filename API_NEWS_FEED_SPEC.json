@@ -1,0 +1,75 @@
+{
+  "_description": "GET /api/launcher/manifest — единый манифест для лаунчера",
+  "_note": "Лаунчер загружает при старте. Если недоступен — использует локальный фоллбэк.",
+
+  "projects": [
+    {
+      "id": "wow_chronos",
+      "name": "Chronos",
+      "full_name": "Realm Chronos",
+      "subtitle": "WotLK 3.3.5a",
+      "type": "WoW Private Server",
+      "description": {"ru": "Living World сервер с динамическими событиями", "en": "Living World server"},
+      "bg_images": [
+        "https://example.com/bg1.jpg",
+        "https://example.com/bg2.jpg"
+      ],
+      "realmlist": "set realmlist lkds-room.online",
+      "exe": "wow.exe",
+      "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
+      "status_url": "https://lkds-room.online/api/status",
+      "news_url": "https://lkds-room.online/api/content/phases",
+      "sso_start_url": "https://lkds-room.online/api/auth/sso/start",
+      "sso_poll_url": "https://lkds-room.online/api/auth/sso/poll",
+      "credentials_url": "https://lkds-room.online/api/auth/credentials",
+      "reset_password_url": "https://lkds-room.online/api/auth/reset-password",
+      "profile_url": "https://lkds-room.online/api/auth/profile",
+
+      "banners": [
+        {"image": "https://example.com/banner1.jpg", "title": "Phase 2 скоро!", "link": "https://example.com"},
+        {"image": "https://example.com/banner2.jpg"}
+      ],
+      "news": [
+        {
+          "tag": "Анонс",
+          "title": "Открытие Phase 2",
+          "text": "Рейд Ulduar доступен!",
+          "date": "2026-03-07",
+          "image": "https://example.com/ulduar.jpg"
+        },
+        {
+          "tag": "Обновление",
+          "title": "Баланс классов",
+          "text": "Исправлены таланты воина.",
+          "date": "2026-03-05"
+        }
+      ]
+    },
+    {
+      "id": "new_project",
+      "name": "Новый проект",
+      "full_name": "Скоро...",
+      "subtitle": "В разработке",
+      "type": "Coming Soon",
+      "description": "Следите за новостями!",
+      "banners": [],
+      "news": []
+    }
+  ],
+
+  "_tags": ["Анонс", "Обновление", "Исправление", "Событие"],
+  "_fields": {
+    "projects[].id":             "Уникальный ID проекта (обязательно)",
+    "projects[].name":           "Короткое имя (для иконки в боковой панели)",
+    "projects[].full_name":      "Полное название",
+    "projects[].subtitle":       "Подзаголовок (версия)",
+    "projects[].type":           "Тип проекта",
+    "projects[].exe":            "Имя exe (пустая строка = неактивный проект)",
+    "projects[].realmlist":      "Строка realmlist для WTF",
+    "projects[].status_url":     "URL для проверки статуса сервера",
+    "projects[].banners[]":      "Баннеры hero-слайдера (image обязательно)",
+    "projects[].news[]":         "Новости (tag, title, text обязательно; date, image опционально)",
+    "projects[].hd_patches":     "НЕ нужно в манифесте — хранится локально в лаунчере",
+    "projects[].graphic_settings": "НЕ нужно в манифесте — хранится локально"
+  }
+}
