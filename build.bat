@@ -1,13 +1,13 @@
 @echo off
-echo === PLGames Launcher Build (Portable) ===
+echo === PLGames Launcher Build ===
 echo.
 
 echo Installing requirements...
 pip install -r requirements.txt
 
 echo.
-echo Building portable launcher...
-pyinstaller --noconsole --name "PLGamesLauncher" ^
+echo Building launcher...
+pyinstaller --noconsole --onefile --name "PLGamesLauncher" ^
     --hidden-import "webview" ^
     --hidden-import "clr" ^
     --hidden-import "requests" ^
@@ -15,11 +15,15 @@ pyinstaller --noconsole --name "PLGamesLauncher" ^
     app.py
 
 echo.
-if exist "dist\PLGamesLauncher\PLGamesLauncher.exe" (
+if exist "dist\PLGamesLauncher.exe" (
     echo === Build OK! ===
     echo.
-    echo Portable folder: dist\PLGamesLauncher\
-    echo Just copy folder into your WoW directory and run PLGamesLauncher.exe
+    echo Output: dist\PLGamesLauncher.exe
+    echo.
+    echo To release:
+    echo   1. git tag v2.x.x
+    echo   2. git push origin v2.x.x
+    echo   3. Upload dist\PLGamesLauncher.exe to GitHub Release
 ) else (
     echo === Build FAILED ===
 )

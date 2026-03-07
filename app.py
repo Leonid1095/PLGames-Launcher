@@ -21,6 +21,8 @@ LAUNCHER_VERSION = "2.1.0"
 API_BASE = "https://lkds-room.online"
 API_AUTH = "https://lkds-room.online"  # port 3000 closed externally, proxied via main domain
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
+GITHUB_REPO = "Leonid1095/PLGames-Launcher"
+GITHUB_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 SETTINGS_FILE = "plgames_settings.json"
 
 PROJECTS = [
@@ -640,6 +642,85 @@ class Api:
     def get_version(self):
         return LAUNCHER_VERSION
 
+    def check_update(self):
+        """Check GitHub Releases for a newer version."""
+        try:
+            import requests
+            r = requests.get(GITHUB_RELEASE_URL, timeout=5, headers={"Accept": "application/vnd.github.v3+json"})
+            if r.status_code == 200:
+                data = r.json()
+                tag = data.get("tag_name", "")
+                remote_ver = tag.lstrip("v")
+                if remote_ver and remote_ver != LAUNCHER_VERSION:
+                    # Find .exe asset
+                    download_url = ""
+                    for asset in data.get("assets", []):
+                        if asset["name"].lower().endswith(".exe"):
+                            download_url = asset["browser_download_url"]
+                            break
+                    return json.dumps({
+                        "has_update": True,
+                        "current": LAUNCHER_VERSION,
+                        "latest": remote_ver,
+                        "changelog": data.get("body", ""),
+                        "download_url": download_url,
+                        "html_url": data.get("html_url", ""),
+                    })
+        except Exception:
+            pass
+        return json.dumps({"has_update": False, "current": LAUNCHER_VERSION})
+
+    def download_update(self, url):
+        """Download new .exe and prepare restart."""
+        if not url:
+            return json.dumps({"ok": False, "msg": "Нет ссылки"})
+        try:
+            import requests
+            r = requests.get(url, stream=True, timeout=60)
+            if r.status_code == 200:
+                # Save next to current exe
+                if getattr(sys, 'frozen', False):
+                    current_exe = sys.executable
+                    update_path = current_exe + ".update"
+                else:
+                    update_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PLGamesLauncher.exe.update")
+
+                total = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                with open(update_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+
+                return json.dumps({"ok": True, "path": update_path})
+        except Exception as e:
+            return json.dumps({"ok": False, "msg": str(e)})
+        return json.dumps({"ok": False, "msg": "Ошибка загрузки"})
+
+    def apply_update(self, update_path):
+        """Replace current exe with update and restart."""
+        try:
+            if getattr(sys, 'frozen', False):
+                current_exe = sys.executable
+                backup = current_exe + ".bak"
+                # Create a batch script that waits, replaces, and restarts
+                bat = os.path.join(os.path.dirname(current_exe), "_update.bat")
+                with open(bat, "w") as f:
+                    f.write(f'@echo off\n')
+                    f.write(f'timeout /t 2 /nobreak >nul\n')
+                    f.write(f'del "{backup}" 2>nul\n')
+                    f.write(f'move "{current_exe}" "{backup}"\n')
+                    f.write(f'move "{update_path}" "{current_exe}"\n')
+                    f.write(f'start "" "{current_exe}"\n')
+                    f.write(f'del "%~f0"\n')
+                subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
+                self.window.destroy()
+                return json.dumps({"ok": True})
+            else:
+                return json.dumps({"ok": False, "msg": "Обновление доступно только для .exe версии"})
+        except Exception as e:
+            return json.dumps({"ok": False, "msg": str(e)})
+
     def minimize_window(self):
         self.window.minimize()
 
@@ -1053,6 +1134,21 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .auth-new-info b{color:#fff;user-select:text}
 .auth-new-hint{font-size:10px;color:var(--orange);margin:6px 0 8px}
 
+/* Update banner */
+.update-card{
+  margin-top:10px;padding:10px 12px;background:rgba(0,174,255,0.08);
+  border:1px solid rgba(0,174,255,0.2);border-radius:8px;
+}
+.update-title{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:4px}
+.update-changelog{font-size:10px;color:var(--text-sec);line-height:1.5;margin-bottom:8px;max-height:60px;overflow:auto}
+.btn-update{
+  width:100%;padding:6px 0;border:none;border-radius:6px;
+  background:var(--accent);color:#fff;font-size:11px;font-weight:600;
+  cursor:pointer;transition:all .15s;
+}
+.btn-update:hover{background:var(--accent-dark)}
+.btn-update:disabled{opacity:0.5;cursor:default}
+
 /* Animations */
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .fade-in{animation:fadeIn .3s ease}
@@ -1237,14 +1333,21 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
       </div>
     </div>
 
-    <!-- About -->
+    <!-- About + Update -->
     <div class="rp-section">
       <div class="rp-header">
         <span class="rp-title">О лаунчере</span>
       </div>
       <div style="font-size:11px;color:var(--text-dim);line-height:1.6">
-        Realm Chronos Launcher<br>
+        PLGames Launcher<br>
         <span id="launcher-version"></span>
+      </div>
+      <div id="update-banner" style="display:none">
+        <div class="update-card">
+          <div class="update-title">Доступно обновление <span id="update-ver"></span></div>
+          <div class="update-changelog" id="update-changelog"></div>
+          <button class="btn-update" id="btn-update" onclick="doUpdate()">Обновить</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1274,6 +1377,9 @@ async function init() {
   const activePid = await pywebview.api.get_active_project();
   const ver = await pywebview.api.get_version();
   document.getElementById('launcher-version').textContent = 'v' + ver;
+
+  // Check for updates (non-blocking)
+  checkForUpdate();
 
   // Game icon bar
   const bar = document.getElementById('game-bar');
@@ -1695,6 +1801,51 @@ async function doLogout() {
 async function resetPassword() {
   const res = JSON.parse(await pywebview.api.reset_password());
   alert(res.msg || (res.ok ? 'Готово' : 'Ошибка'));
+}
+
+// ==================== AUTO-UPDATE ====================
+
+let pendingUpdateUrl = '';
+
+async function checkForUpdate() {
+  try {
+    const res = JSON.parse(await pywebview.api.check_update());
+    if (res.has_update) {
+      pendingUpdateUrl = res.download_url;
+      document.getElementById('update-ver').textContent = 'v' + res.latest;
+      document.getElementById('update-changelog').textContent = res.changelog || 'Улучшения и исправления';
+      document.getElementById('update-banner').style.display = '';
+    }
+  } catch(e) {}
+}
+
+async function doUpdate() {
+  if (!pendingUpdateUrl) return;
+  const btn = document.getElementById('btn-update');
+  btn.disabled = true;
+  btn.textContent = 'Скачивание...';
+
+  try {
+    const res = JSON.parse(await pywebview.api.download_update(pendingUpdateUrl));
+    if (res.ok) {
+      btn.textContent = 'Установка...';
+      const applyRes = JSON.parse(await pywebview.api.apply_update(res.path));
+      if (!applyRes.ok) {
+        alert(applyRes.msg || 'Ошибка установки');
+        btn.disabled = false;
+        btn.textContent = 'Обновить';
+      }
+      // If ok — launcher will restart via batch script
+    } else {
+      alert(res.msg || 'Ошибка загрузки');
+      btn.disabled = false;
+      btn.textContent = 'Обновить';
+    }
+  } catch(e) {
+    alert('Ошибка обновления');
+    btn.disabled = false;
+    btn.textContent = 'Обновить';
+  }
 }
 
 window.addEventListener('pywebviewready', init);
