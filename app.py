@@ -12,6 +12,7 @@ import subprocess
 import uuid
 import threading
 import webbrowser
+import time
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -29,6 +30,7 @@ PROJECTS = [
     {
         "id": "wow_chronos",
         "name": "Chronos",
+        "icon_url": "",
         "full_name": "Realm Chronos",
         "subtitle": "WotLK 3.3.5a",
         "type": "WoW Private Server",
@@ -40,6 +42,7 @@ PROJECTS = [
         ],
         "realmlist": "set realmlist lkds-room.online",
         "exe": "wow.exe",
+        "torrent_url": "",
         "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
         "news_url": f"{API_BASE}/api/content/phases",
         "status_url": f"{API_BASE}/api/status",
@@ -277,6 +280,127 @@ def toggle_mpq(gp, fname, folder, enable):
         return False
 
 # ---------------------------------------------------------------------------
+# TORRENT DOWNLOADER
+# ---------------------------------------------------------------------------
+
+class TorrentManager:
+    """Manages game downloads via libtorrent."""
+
+    def __init__(self):
+        self._session = None
+        self._handle = None
+        self._active = False
+        self._paused = False
+        self._save_path = ""
+        self._error = ""
+
+    def _ensure_session(self):
+        if self._session is None:
+            import libtorrent as lt
+            self._session = lt.session()
+            self._session.listen_on(6881, 6891)
+            settings = self._session.get_settings()
+            settings['enable_dht'] = True
+            settings['enable_lsd'] = True
+            settings['enable_upnp'] = True
+            settings['enable_natpmp'] = True
+            self._session.apply_settings(settings)
+
+    def start(self, torrent_source, save_path):
+        """Start download. torrent_source can be a magnet link or .torrent URL/path."""
+        import libtorrent as lt
+        self._ensure_session()
+        self._save_path = save_path
+        self._error = ""
+        os.makedirs(save_path, exist_ok=True)
+
+        params = {'save_path': save_path}
+
+        if torrent_source.startswith('magnet:'):
+            self._handle = lt.add_magnet_uri(self._session, torrent_source, params)
+        elif torrent_source.startswith('http'):
+            # Download .torrent file first
+            import requests
+            r = requests.get(torrent_source, timeout=30)
+            if r.status_code != 200:
+                self._error = f"Не удалось скачать .torrent: HTTP {r.status_code}"
+                return False
+            ti = lt.torrent_info(lt.bdecode(r.content))
+            params['ti'] = ti
+            self._handle = self._session.add_torrent(params)
+        elif os.path.isfile(torrent_source):
+            ti = lt.torrent_info(torrent_source)
+            params['ti'] = ti
+            self._handle = self._session.add_torrent(params)
+        else:
+            self._error = "Неверный источник торрента"
+            return False
+
+        self._active = True
+        self._paused = False
+        return True
+
+    def pause(self):
+        if self._handle:
+            self._handle.pause()
+            self._paused = True
+
+    def resume(self):
+        if self._handle:
+            self._handle.resume()
+            self._paused = False
+
+    def cancel(self):
+        if self._handle and self._session:
+            self._session.remove_torrent(self._handle)
+        self._handle = None
+        self._active = False
+        self._paused = False
+
+    def status(self):
+        """Return current download status as dict."""
+        if self._error:
+            return {"state": "error", "error": self._error}
+        if not self._handle or not self._active:
+            return {"state": "idle"}
+
+        s = self._handle.status()
+        state_map = {0: 'checking', 1: 'metadata', 2: 'downloading',
+                     3: 'downloading', 4: 'finished', 5: 'seeding'}
+        state = state_map.get(s.state, 'unknown')
+
+        if self._paused:
+            state = 'paused'
+
+        total = s.total_wanted or 1
+        downloaded = s.total_wanted_done
+        progress = downloaded / total
+
+        # Speed
+        down_speed = s.download_rate / 1024 / 1024  # MB/s
+        # ETA
+        if s.download_rate > 0:
+            remaining = (total - downloaded) / s.download_rate
+            eta_min = int(remaining / 60)
+            eta_sec = int(remaining % 60)
+            eta = f"{eta_min}:{eta_sec:02d}"
+        else:
+            eta = "--:--"
+
+        return {
+            "state": state,
+            "progress": round(progress * 100, 1),
+            "downloaded_mb": round(downloaded / 1048576, 1),
+            "total_mb": round(total / 1048576, 1),
+            "speed_mb": round(down_speed, 2),
+            "eta": eta,
+            "seeds": s.num_seeds,
+            "peers": s.num_peers,
+        }
+
+_torrent_mgr = TorrentManager()
+
+# ---------------------------------------------------------------------------
 # JS API (exposed to webview)
 # ---------------------------------------------------------------------------
 
@@ -291,6 +415,7 @@ class Api:
             "id": p["id"], "name": p["name"], "full_name": p["full_name"],
             "subtitle": p["subtitle"], "type": p["type"], "description": p["description"],
             "has_exe": bool(p.get("exe")),
+            "icon_url": p.get("icon_url", ""),
         } for p in self.projects])
 
     def refresh_manifest(self):
@@ -721,6 +846,48 @@ class Api:
         except Exception as e:
             return json.dumps({"ok": False, "msg": str(e)})
 
+    # ---- TORRENT DOWNLOAD ----
+
+    def start_download(self, pid):
+        """Start torrent download for a project."""
+        proj = next((p for p in self.projects if p["id"] == pid), None)
+        if not proj:
+            return json.dumps({"ok": False, "msg": "Проект не найден"})
+        torrent_src = proj.get("torrent_url", "")
+        if not torrent_src:
+            return json.dumps({"ok": False, "msg": "Торрент не настроен для этого проекта"})
+
+        # Ask user where to save
+        save_path = self.settings.get("game_paths", {}).get(pid, "")
+        if not save_path:
+            result = self.window.create_file_dialog(webview.FOLDER_DIALOG, directory="")
+            if result and len(result) > 0:
+                save_path = result[0]
+                self.settings.setdefault("game_paths", {})[pid] = save_path
+                save_settings(self.settings)
+            else:
+                return json.dumps({"ok": False, "msg": "Не выбрана папка"})
+
+        ok = _torrent_mgr.start(torrent_src, save_path)
+        if ok:
+            return json.dumps({"ok": True, "save_path": save_path})
+        return json.dumps({"ok": False, "msg": _torrent_mgr._error or "Ошибка запуска"})
+
+    def pause_download(self):
+        _torrent_mgr.pause()
+        return json.dumps({"ok": True})
+
+    def resume_download(self):
+        _torrent_mgr.resume()
+        return json.dumps({"ok": True})
+
+    def cancel_download(self):
+        _torrent_mgr.cancel()
+        return json.dumps({"ok": True})
+
+    def get_download_status(self):
+        return json.dumps(_torrent_mgr.status())
+
     def minimize_window(self):
         self.window.minimize()
 
@@ -815,12 +982,19 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
   background:var(--accent);border-radius:1px;
 }
 .game-bar-icon{
-  width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;
-  font-size:14px;font-weight:800;color:#fff;
-  background:linear-gradient(135deg,#1e3a5f,#2d5a87);
-  text-shadow:0 1px 2px rgba(0,0,0,0.5);
+  width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:900;color:#ffd666;font-family:'Cinzel',serif;
+  background:linear-gradient(135deg,#1a1a2e,#2a2040);
+  border:1.5px solid rgba(255,214,102,0.3);
+  text-shadow:0 0 8px rgba(255,214,102,0.4);
+  overflow:hidden;transition:all .2s;
 }
-.game-bar-icon.soon{background:linear-gradient(135deg,#333,#555);color:#999}
+.game-bar-btn.active .game-bar-icon{
+  border-color:rgba(255,214,102,0.6);
+  box-shadow:0 0 10px rgba(255,214,102,0.15);
+}
+.game-bar-icon img{width:100%;height:100%;object-fit:cover;border-radius:7px}
+.game-bar-icon.soon{background:linear-gradient(135deg,#222,#333);color:#666;border-color:rgba(255,255,255,0.08);text-shadow:none}
 
 /* ===== MAIN LAYOUT ===== */
 .main-wrap{display:flex;height:calc(100vh - 48px - 52px);overflow:hidden}
@@ -962,6 +1136,38 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .btn-play:disabled::before{display:none}
 .btn-play.coming{background:#2a2d38;color:var(--text-dim);letter-spacing:3px}
 .btn-play.coming::before{display:none}
+
+/* Download bar */
+.download-bar{display:none;flex:1;align-items:center;gap:12px}
+.download-bar.active{display:flex}
+.download-progress-wrap{
+  flex:1;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;
+}
+.download-progress-fill{
+  height:100%;background:linear-gradient(90deg,var(--accent),var(--blue-btn));
+  border-radius:4px;transition:width .3s ease;width:0%;
+}
+.download-info{
+  display:flex;flex-direction:column;align-items:flex-end;gap:1px;min-width:120px;
+}
+.download-pct{font-size:13px;font-weight:700;color:var(--text)}
+.download-speed{font-size:10px;color:var(--text-sec)}
+.download-eta{font-size:10px;color:var(--text-dim)}
+.download-btns{display:flex;gap:4px}
+.download-btn{
+  width:32px;height:32px;border:1px solid var(--border);background:var(--bg);
+  border-radius:6px;color:var(--text-sec);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.download-btn:hover{background:rgba(255,255,255,0.05);color:var(--text)}
+.btn-install{
+  padding:0 44px;height:44px;font-size:14px;font-weight:700;
+  border-radius:6px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;
+  letter-spacing:1px;text-transform:uppercase;font-family:inherit;
+  transition:all .2s;flex-shrink:0;
+}
+.btn-install:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(34,197,94,0.3)}
 
 /* ===== RIGHT PANEL (server info / social) ===== */
 .right-panel{
@@ -1236,10 +1442,30 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
           </select>
         </div>
         <span class="play-msg" id="launch-msg"></span>
+        <!-- Download progress (hidden by default) -->
+        <div class="download-bar" id="download-bar">
+          <div class="download-progress-wrap">
+            <div class="download-progress-fill" id="dl-progress-fill"></div>
+          </div>
+          <div class="download-info">
+            <span class="download-pct" id="dl-pct">0%</span>
+            <span class="download-speed" id="dl-speed">0 MB/s</span>
+            <span class="download-eta" id="dl-eta">--:--</span>
+          </div>
+          <div class="download-btns">
+            <button class="download-btn" id="dl-pause-btn" onclick="togglePauseDownload()" title="Пауза">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            </button>
+            <button class="download-btn" onclick="cancelDownload()" title="Отмена">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
         <button class="play-settings-btn" onclick="showPage('settings')" title="Настройки">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button class="btn-play" id="btn-play" onclick="launchGame()">ИГРАТЬ</button>
+        <button class="btn-install" id="btn-install" style="display:none" onclick="startInstall()">УСТАНОВИТЬ</button>
       </div>
     </div>
 
@@ -1391,7 +1617,16 @@ async function init() {
     btn.title = p.name;
     const icon = document.createElement('div');
     icon.className = 'game-bar-icon' + (p.has_exe ? '' : ' soon');
-    icon.textContent = p.name.charAt(0).toUpperCase();
+    if (p.icon_url) {
+      const img = document.createElement('img');
+      img.src = p.icon_url;
+      img.alt = p.name;
+      icon.appendChild(img);
+    } else if (p.type && p.type.toLowerCase().includes('wow')) {
+      icon.textContent = 'W';
+    } else {
+      icon.textContent = p.name.charAt(0).toUpperCase();
+    }
     btn.appendChild(icon);
     btn.onclick = () => selectProject(p.id);
     bar.appendChild(btn);
@@ -1411,7 +1646,8 @@ async function selectProject(pid, save=true) {
   });
 
   loadGameView();
-  loadNewsFeed();
+  loadNewsRow();
+  loadNews();
   loadSettings();
   checkStatus();
 }
@@ -1490,18 +1726,32 @@ async function loadGameView() {
   document.getElementById('server-realm').textContent = p.name;
 
   const btn = document.getElementById('btn-play');
+  const btnInstall = document.getElementById('btn-install');
+  const dlBar = document.getElementById('download-bar');
+  btnInstall.style.display = 'none';
+  dlBar.className = 'download-bar';
   if (!p.has_exe) {
     btn.className = 'btn-play coming';
     btn.textContent = 'СКОРО';
     btn.disabled = true;
+    btn.style.display = '';
     document.getElementById('path-section').style.display = 'none';
   } else {
-    btn.className = 'btn-play';
-    btn.textContent = 'ИГРАТЬ';
-    btn.disabled = false;
-    document.getElementById('path-section').style.display = '';
     const gp = await pywebview.api.get_game_path(p.id);
-    document.getElementById('play-path').textContent = gp || 'Не указана';
+    if (!gp) {
+      // No game installed — show INSTALL button
+      btn.style.display = 'none';
+      btnInstall.style.display = '';
+      document.getElementById('path-section').style.display = '';
+      document.getElementById('play-path').textContent = 'Не установлена';
+    } else {
+      btn.className = 'btn-play';
+      btn.textContent = 'ИГРАТЬ';
+      btn.disabled = false;
+      btn.style.display = '';
+      document.getElementById('path-section').style.display = '';
+      document.getElementById('play-path').textContent = gp;
+    }
   }
   document.getElementById('launch-msg').textContent = '';
 }
@@ -1553,61 +1803,44 @@ async function checkStatus() {
 
 // ==================== NEWS ====================
 
-async function loadNewsFeed() {
-  try {
-    cachedNewsFeed = JSON.parse(await pywebview.api.get_news_feed(activeProject.id));
-  } catch(e) {
-    cachedNewsFeed = {banners: [], news: []};
-  }
-  // Update hero slider with banners from feed
-  const banners = cachedNewsFeed.banners || [];
-  if (banners.length > 0) {
-    HERO_IMAGES = banners.map(b => b.image);
-    startHeroSlider();
-  }
-  // Render news row (main page) and full news grid
-  renderNewsRow();
-  renderNewsGrid();
-}
-
-function renderNewsRow() {
+async function loadNewsRow() {
   const row = document.getElementById('news-row');
   row.innerHTML = '';
-  if (!cachedNewsFeed) return;
-  const items = (cachedNewsFeed.news || []).slice(0, 3);
-  const banners = cachedNewsFeed.banners || [];
-  items.forEach((item, i) => {
-    const img = item.image || (banners[i % banners.length] || {}).image || '';
-    row.innerHTML += `
-      <div class="news-card-mini" onclick="showPage('news')">
-        <div class="news-card-img" style="background-image:url(${img})"></div>
-        <div class="news-card-body">
-          <div class="news-card-tag">${esc(item.tag || 'Новость')}</div>
-          <div class="news-card-title">${esc(item.title)}</div>
-        </div>
-      </div>`;
-  });
+  try {
+    const data = JSON.parse(await pywebview.api.get_news(activeProject.id));
+    const items = (data.news || []).slice(0, 3);
+    items.forEach((item, i) => {
+      row.innerHTML += `
+        <div class="news-card-mini" onclick="showPage('news')">
+          <div class="news-card-img" style="background-image:url(${HERO_IMAGES[i % HERO_IMAGES.length]})"></div>
+          <div class="news-card-body">
+            <div class="news-card-tag">${esc(item.tag || 'Новость')}</div>
+            <div class="news-card-title">${esc(item.title)}</div>
+          </div>
+        </div>`;
+    });
+  } catch(e) {}
 }
 
-function renderNewsGrid() {
+async function loadNews() {
   const grid = document.getElementById('news-grid');
-  if (!cachedNewsFeed) { grid.innerHTML = ''; return; }
-  const items = cachedNewsFeed.news || [];
-  grid.innerHTML = '';
-  items.forEach(item => {
-    const tagClass = TAG_CLASSES[item.tag] || 'tag-announce';
-    const imgHtml = item.image ? `<div class="news-card-full-img" style="background-image:url(${item.image})"></div>` : '';
-    grid.innerHTML += `
-      <div class="news-card-full">
-        ${imgHtml}
-        <div class="news-top">
-          <span class="news-tag ${tagClass}">${esc(item.tag)}</span>
-          <span class="news-date">${esc(item.date)}</span>
-        </div>
-        <h3>${esc(item.title)}</h3>
-        <p>${esc(item.text)}</p>
-      </div>`;
-  });
+  grid.innerHTML = '<div style="color:var(--text-sec);font-size:13px">Загрузка...</div>';
+  try {
+    const data = JSON.parse(await pywebview.api.get_news(activeProject.id));
+    const items = data.news || [];
+    grid.innerHTML = '';
+    items.forEach(item => {
+      const tagClass = TAG_CLASSES[item.tag] || 'tag-announce';
+      grid.innerHTML += `
+        <div class="news-card-full">
+          <div class="news-top">
+            <span class="news-tag ${tagClass}">${esc(item.tag)}</span>
+            <span class="news-date">${esc(item.date)}</span>
+          </div>
+          <h3>${esc(item.title)}</h3>
+          <p>${esc(item.text)}</p>
+        </div>`;
+    });
   } catch(e) {
     grid.innerHTML = '<div style="color:var(--text-sec)">Не удалось загрузить</div>';
   }
@@ -1801,6 +2034,117 @@ async function doLogout() {
 async function resetPassword() {
   const res = JSON.parse(await pywebview.api.reset_password());
   alert(res.msg || (res.ok ? 'Готово' : 'Ошибка'));
+}
+
+// ==================== DOWNLOAD / INSTALL ====================
+
+let dlPollTimer = null;
+let dlPaused = false;
+
+async function startInstall() {
+  const btnInstall = document.getElementById('btn-install');
+  btnInstall.style.display = 'none';
+
+  try {
+    const res = JSON.parse(await pywebview.api.start_download(activeProject.id));
+    if (!res.ok) {
+      // No torrent configured — fallback to browse path
+      if (res.msg && res.msg.includes('Торрент не настроен')) {
+        const path = await pywebview.api.browse_game_path(activeProject.id);
+        if (path) {
+          document.getElementById('play-path').textContent = path;
+          loadGameView();
+        } else {
+          btnInstall.style.display = '';
+        }
+        return;
+      }
+      alert(res.msg || 'Ошибка');
+      btnInstall.style.display = '';
+      return;
+    }
+    // Show download bar
+    document.getElementById('play-path').textContent = res.save_path;
+    showDownloadBar();
+    pollDownloadStatus();
+  } catch(e) {
+    alert('Ошибка запуска загрузки');
+    btnInstall.style.display = '';
+  }
+}
+
+function showDownloadBar() {
+  const dlBar = document.getElementById('download-bar');
+  const btnPlay = document.getElementById('btn-play');
+  const btnInstall = document.getElementById('btn-install');
+  dlBar.className = 'download-bar active';
+  btnPlay.style.display = 'none';
+  btnInstall.style.display = 'none';
+}
+
+function hideDownloadBar() {
+  const dlBar = document.getElementById('download-bar');
+  dlBar.className = 'download-bar';
+  if (dlPollTimer) clearTimeout(dlPollTimer);
+  dlPollTimer = null;
+}
+
+async function pollDownloadStatus() {
+  try {
+    const s = JSON.parse(await pywebview.api.get_download_status());
+
+    if (s.state === 'finished' || s.state === 'seeding') {
+      hideDownloadBar();
+      document.getElementById('btn-play').style.display = '';
+      document.getElementById('btn-play').className = 'btn-play';
+      document.getElementById('btn-play').textContent = 'ИГРАТЬ';
+      document.getElementById('btn-play').disabled = false;
+      loadGameView();
+      return;
+    }
+
+    if (s.state === 'error') {
+      hideDownloadBar();
+      alert(s.error || 'Ошибка загрузки');
+      document.getElementById('btn-install').style.display = '';
+      return;
+    }
+
+    if (s.state === 'idle') {
+      hideDownloadBar();
+      return;
+    }
+
+    // Update UI
+    document.getElementById('dl-progress-fill').style.width = s.progress + '%';
+    document.getElementById('dl-pct').textContent = s.progress + '%';
+    document.getElementById('dl-speed').textContent = s.speed_mb + ' MB/s';
+    document.getElementById('dl-eta').textContent = s.eta + ' • ' + s.downloaded_mb + '/' + s.total_mb + ' MB';
+
+  } catch(e) {}
+
+  dlPollTimer = setTimeout(pollDownloadStatus, 1000);
+}
+
+function togglePauseDownload() {
+  dlPaused = !dlPaused;
+  const btn = document.getElementById('dl-pause-btn');
+  if (dlPaused) {
+    pywebview.api.pause_download();
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
+    btn.title = 'Продолжить';
+  } else {
+    pywebview.api.resume_download();
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+    btn.title = 'Пауза';
+  }
+}
+
+async function cancelDownload() {
+  if (!confirm('Отменить загрузку?')) return;
+  await pywebview.api.cancel_download();
+  hideDownloadBar();
+  document.getElementById('btn-install').style.display = '';
 }
 
 // ==================== AUTO-UPDATE ====================
