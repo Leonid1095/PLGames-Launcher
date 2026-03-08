@@ -296,9 +296,30 @@ class TorrentManager:
         self._progress_file = ""
         self._torrent_source = ""
 
+    def _launcher_dir(self):
+        """Directory where the launcher exe (or script) lives."""
+        if getattr(sys, 'frozen', False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def _bundled_path(self, filename):
+        """Get path to a bundled file, extracting from _MEIPASS if needed."""
+        launcher_dir = self._launcher_dir()
+        target = os.path.join(launcher_dir, filename)
+        if os.path.isfile(target):
+            return target
+        # Try extracting from PyInstaller bundle
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            src = os.path.join(meipass, filename)
+            if os.path.isfile(src):
+                import shutil
+                shutil.copy2(src, target)
+                return target
+        return target
+
     def _aria2c_path(self):
-        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(launcher_dir, "aria2c.exe")
+        return self._bundled_path("aria2c.exe")
 
     def start(self, torrent_source, save_path):
         """Start download via aria2c. Supports .torrent files, magnet links, URLs."""
@@ -311,10 +332,9 @@ class TorrentManager:
         self._error = ""
         os.makedirs(save_path, exist_ok=True)
 
-        # Resolve relative .torrent paths
+        # Resolve relative .torrent paths (also extracts from bundle)
         if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
-            launcher_dir = os.path.dirname(aria2c)
-            resolved = os.path.join(launcher_dir, torrent_source)
+            resolved = self._bundled_path(torrent_source)
             if os.path.isfile(resolved):
                 torrent_source = resolved
 
