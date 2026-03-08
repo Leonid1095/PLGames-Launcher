@@ -12,7 +12,7 @@ LAUNCHER_TITLE = "PLGames Launcher"
 LAUNCHER_VERSION = "2.0.0"
 
 # --- API Endpoints ---
-API_BASE_URL = "https://plgames-dns.space"
+API_BASE_URL = "https://lkds-room.online"
 NEWS_API_URL = f"{API_BASE_URL}/api/launcher/news"
 STATUS_API_URL = f"{API_BASE_URL}/api/launcher/status"
 UPDATE_MANIFEST_URL = f"{API_BASE_URL}/api/launcher/manifest"

@@ -11,8 +11,6 @@ pyinstaller --noconsole --onefile --name "PLGamesLauncher" ^
     --hidden-import "webview" ^
     --hidden-import "clr" ^
     --hidden-import "requests" ^
-    --add-data "aria2c.exe;." ^
-    --add-data "WoW 3.3.5a.torrent;." ^
     --clean ^
     app.py
 
@@ -21,8 +19,12 @@ if exist "dist\PLGamesLauncher.exe" (
     echo === Build OK! ===
     echo.
 
+    echo Copying support files...
+    if exist "aria2c.exe" copy /Y "aria2c.exe" "dist\aria2c.exe"
+    if exist "WoW 3.3.5a.torrent" copy /Y "WoW 3.3.5a.torrent" "dist\WoW 3.3.5a.torrent"
+
     echo Creating portable ZIP...
-    powershell -Command "Compress-Archive -Path 'dist\PLGamesLauncher.exe' -DestinationPath 'dist\PLGamesLauncher_Portable.zip' -Force"
+    powershell -Command "Compress-Archive -Path 'dist\PLGamesLauncher.exe','dist\aria2c.exe','dist\WoW 3.3.5a.torrent' -DestinationPath 'dist\PLGamesLauncher_Portable.zip' -Force"
 
     echo Building installer...
     if exist "installer.nsi" (
@@ -31,9 +33,8 @@ if exist "dist\PLGamesLauncher.exe" (
 
     echo.
     echo Output:
-    echo   dist\PLGamesLauncher.exe          - standalone
-    echo   dist\PLGamesLauncher_Portable.zip - portable
-    echo   dist\PLGamesLauncher_Setup.exe    - installer
+    echo   dist\PLGamesLauncher_Setup.exe    - installer (all-in-one)
+    echo   dist\PLGamesLauncher_Portable.zip - portable (unzip and run)
     echo.
     echo To release:
     echo   1. git tag v0.x.x

@@ -296,30 +296,9 @@ class TorrentManager:
         self._progress_file = ""
         self._torrent_source = ""
 
-    def _launcher_dir(self):
-        """Directory where the launcher exe (or script) lives."""
-        if getattr(sys, 'frozen', False):
-            return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__))
-
-    def _bundled_path(self, filename):
-        """Get path to a bundled file, extracting from _MEIPASS if needed."""
-        launcher_dir = self._launcher_dir()
-        target = os.path.join(launcher_dir, filename)
-        if os.path.isfile(target):
-            return target
-        # Try extracting from PyInstaller bundle
-        meipass = getattr(sys, '_MEIPASS', None)
-        if meipass:
-            src = os.path.join(meipass, filename)
-            if os.path.isfile(src):
-                import shutil
-                shutil.copy2(src, target)
-                return target
-        return target
-
     def _aria2c_path(self):
-        return self._bundled_path("aria2c.exe")
+        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(launcher_dir, "aria2c.exe")
 
     def start(self, torrent_source, save_path):
         """Start download via aria2c. Supports .torrent files, magnet links, URLs."""
@@ -332,15 +311,24 @@ class TorrentManager:
         self._error = ""
         os.makedirs(save_path, exist_ok=True)
 
-        # Resolve relative .torrent paths (also extracts from bundle)
+        # Resolve relative .torrent paths
         if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
-            resolved = self._bundled_path(torrent_source)
+            launcher_dir = os.path.dirname(aria2c)
+            resolved = os.path.join(launcher_dir, torrent_source)
             if os.path.isfile(resolved):
                 torrent_source = resolved
 
         self._torrent_source = torrent_source
         self._progress_file = os.path.join(save_path, ".aria2_progress.txt")
 
+        # Public trackers for DHT bootstrap and peer discovery
+        trackers = ",".join([
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://open.stealth.si:80/announce",
+            "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://open.demonii.com:1337/announce",
+        ])
         cmd = [
             aria2c,
             "--dir", save_path,
@@ -350,18 +338,17 @@ class TorrentManager:
             "--bt-enable-lpd=true",
             "--enable-dht=true",
             "--enable-peer-exchange=true",
+            f"--bt-tracker={trackers}",
             "--max-connection-per-server=8",
             "--split=8",
             "--file-allocation=none",
             "--continue=true",
+            "--listen-port=6881-6999",
+            "--dht-listen-port=6881-6999",
         ]
 
-        if torrent_source.startswith('magnet:'):
-            cmd.append(torrent_source)
-        elif torrent_source.endswith('.torrent') or os.path.isfile(torrent_source):
-            cmd.extend(["--torrent-file", torrent_source])
-        else:
-            cmd.append(torrent_source)
+        # aria2c expects torrent file or magnet as positional argument
+        cmd.append(torrent_source)
 
         try:
             self._process = subprocess.Popen(
@@ -400,23 +387,21 @@ class TorrentManager:
         self._active = False
 
     def _parse_progress_line(self, line):
-        """Parse: [#abc123 500MiB/2.5GiB(19%) CN:5 DL:12MiB ETA:3m2s]"""
+        """Parse: [#abc123 0B/20GiB(0%) CN:0 SD:0 DL:0B] or [#abc123 500MiB/2.5GiB(19%) CN:5 DL:12MiB ETA:3m2s]"""
         import re
         try:
             pct_m = re.search(r'\((\d+)%\)', line)
-            dl_m = re.search(r'DL:([0-9.]+)(\w+)', line)
-            eta_m = re.search(r'ETA:(\S+)\]', line)
-            size_m = re.search(r'(\d+(?:\.\d+)?)((?:KiB|MiB|GiB))/(\d+(?:\.\d+)?)((?:KiB|MiB|GiB))', line)
+            # DL: can be "0B", "500B", "12KiB", "1.5MiB", "2GiB"
+            dl_m = re.search(r'DL:([0-9.]+)(B|KiB|MiB|GiB)', line)
+            eta_m = re.search(r'ETA:(\S+?)[\]\s]', line)
+            # Size: "0B/20GiB" or "500MiB/2.5GiB"
+            size_m = re.search(r'(\d+(?:\.\d+)?)(B|KiB|MiB|GiB)/(\d+(?:\.\d+)?)(B|KiB|MiB|GiB)', line)
 
             progress = float(pct_m.group(1)) if pct_m else self._last_status.get("progress", 0)
 
             speed = 0
             if dl_m:
-                val = float(dl_m.group(1))
-                unit = dl_m.group(2)
-                if 'GiB' in unit: speed = val * 1024
-                elif 'MiB' in unit: speed = val
-                elif 'KiB' in unit: speed = val / 1024
+                speed = self._to_mb(float(dl_m.group(1)), dl_m.group(2))
 
             eta = eta_m.group(1) if eta_m else "--:--"
 
@@ -428,6 +413,8 @@ class TorrentManager:
 
             seeds_m = re.search(r'SD:(\d+)', line)
             seeds = int(seeds_m.group(1)) if seeds_m else 0
+            cn_m = re.search(r'CN:(\d+)', line)
+            peers = int(cn_m.group(1)) if cn_m else 0
 
             self._last_status = {
                 "state": "paused" if self._paused else "downloading",
@@ -437,15 +424,16 @@ class TorrentManager:
                 "speed_mb": round(speed, 2),
                 "eta": eta,
                 "seeds": seeds,
-                "peers": 0,
+                "peers": peers,
             }
         except Exception:
             pass
 
     def _to_mb(self, val, unit):
-        if 'GiB' in unit: return val * 1024
-        if 'MiB' in unit: return val
-        if 'KiB' in unit: return val / 1024
+        if unit == 'GiB': return val * 1024
+        if unit == 'MiB': return val
+        if unit == 'KiB': return val / 1024
+        if unit == 'B': return val / (1024 * 1024)
         return val
 
     def pause(self):
@@ -515,7 +503,14 @@ class Api:
             if detected:
                 self.settings.setdefault("game_paths", {})[pid] = detected
                 save_settings(self.settings)
-                return detected
+                p = detected
+        # Verify game exe exists in path
+        if p:
+            proj = next((pr for pr in self.projects if pr["id"] == pid), None)
+            if proj and proj.get("exe"):
+                exe = os.path.join(p, proj["exe"])
+                if not os.path.isfile(exe) and not os.path.isfile(os.path.join(p, proj["exe"].capitalize())):
+                    return ""
         return p
 
     def browse_game_path(self, pid):
@@ -1839,7 +1834,10 @@ async function loadGameView() {
 
 async function browsePath() {
   const path = await pywebview.api.browse_game_path(activeProject.id);
-  if (path) document.getElementById('play-path').textContent = path;
+  if (path) {
+    document.getElementById('play-path').textContent = path;
+    loadGameView();
+  }
 }
 
 async function launchGame() {
@@ -2199,8 +2197,17 @@ async function pollDownloadStatus() {
     // Update UI
     document.getElementById('dl-progress-fill').style.width = s.progress + '%';
     document.getElementById('dl-pct').textContent = s.progress + '%';
-    document.getElementById('dl-speed').textContent = s.speed_mb + ' MB/s';
-    document.getElementById('dl-eta').textContent = s.eta + ' • ' + s.downloaded_mb + '/' + s.total_mb + ' MB';
+
+    let speedText = s.speed_mb > 0 ? s.speed_mb.toFixed(1) + ' MB/s' : 'Поиск пиров...';
+    let detailText = '';
+    if (s.total_mb > 0) {
+      detailText = s.downloaded_mb.toFixed(0) + '/' + s.total_mb.toFixed(0) + ' MB';
+      if (s.eta && s.eta !== '--:--') detailText = s.eta + ' • ' + detailText;
+    }
+    if (s.seeds !== undefined) detailText += ' • SD:' + s.seeds + ' CN:' + (s.peers||0);
+
+    document.getElementById('dl-speed').textContent = speedText;
+    document.getElementById('dl-eta').textContent = detailText;
 
   } catch(e) {}
 

@@ -17,6 +17,8 @@ Section "Install"
     SetOutPath "$INSTDIR"
 
     File "dist\PLGamesLauncher.exe"
+    File "dist\aria2c.exe"
+    File "dist\WoW 3.3.5a.torrent"
 
     ; Desktop shortcut
     CreateShortCut "$DESKTOP\PLGames Launcher.lnk" "$INSTDIR\PLGamesLauncher.exe"

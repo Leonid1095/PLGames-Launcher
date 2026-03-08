@@ -10,7 +10,7 @@ import requests
 # Configuration
 # TODO: User must replace this with their actual raw github url
 UPDATE_URL = "https://raw.githubusercontent.com/USER/REPO/main/version.json" 
-SERVER_REALMLIST = "set realmlist logon.azeroth-legacy.com"
+SERVER_REALMLIST = "set realmlist lkds-room.online"
 WOW_EXE = "wow.exe"
 VERSION_FILE = "version.json"
 REALMLIST_PATHS = [
