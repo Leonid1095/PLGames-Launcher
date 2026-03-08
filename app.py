@@ -18,7 +18,7 @@ import time
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "2.1.0"
+LAUNCHER_VERSION = "0.2.0"
 API_BASE = "https://lkds-room.online"
 API_AUTH = "https://lkds-room.online"  # port 3000 closed externally, proxied via main domain
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
@@ -42,7 +42,8 @@ PROJECTS = [
         ],
         "realmlist": "set realmlist lkds-room.online",
         "exe": "wow.exe",
-        "torrent_url": "",
+        "torrent_url": "WoW 3.3.5a.torrent",
+        "torrent_folder": "WoW 3.3.5a",
         "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
         "news_url": f"{API_BASE}/api/content/phases",
         "status_url": f"{API_BASE}/api/status",
@@ -284,119 +285,176 @@ def toggle_mpq(gp, fname, folder, enable):
 # ---------------------------------------------------------------------------
 
 class TorrentManager:
-    """Manages game downloads via libtorrent."""
+    """Manages game downloads via aria2c subprocess."""
 
     def __init__(self):
-        self._session = None
-        self._handle = None
+        self._process = None
         self._active = False
         self._paused = False
         self._save_path = ""
         self._error = ""
+        self._progress_file = ""
+        self._torrent_source = ""
 
-    def _ensure_session(self):
-        if self._session is None:
-            import libtorrent as lt
-            self._session = lt.session()
-            self._session.listen_on(6881, 6891)
-            settings = self._session.get_settings()
-            settings['enable_dht'] = True
-            settings['enable_lsd'] = True
-            settings['enable_upnp'] = True
-            settings['enable_natpmp'] = True
-            self._session.apply_settings(settings)
+    def _aria2c_path(self):
+        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(launcher_dir, "aria2c.exe")
 
     def start(self, torrent_source, save_path):
-        """Start download. torrent_source can be a magnet link or .torrent URL/path."""
-        import libtorrent as lt
-        self._ensure_session()
+        """Start download via aria2c. Supports .torrent files, magnet links, URLs."""
+        aria2c = self._aria2c_path()
+        if not os.path.isfile(aria2c):
+            self._error = "aria2c.exe не найден рядом с лаунчером"
+            return False
+
         self._save_path = save_path
         self._error = ""
         os.makedirs(save_path, exist_ok=True)
 
-        params = {'save_path': save_path}
+        # Resolve relative .torrent paths
+        if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
+            launcher_dir = os.path.dirname(aria2c)
+            resolved = os.path.join(launcher_dir, torrent_source)
+            if os.path.isfile(resolved):
+                torrent_source = resolved
+
+        self._torrent_source = torrent_source
+        self._progress_file = os.path.join(save_path, ".aria2_progress.txt")
+
+        cmd = [
+            aria2c,
+            "--dir", save_path,
+            "--seed-time=0",
+            "--summary-interval=1",
+            "--console-log-level=notice",
+            "--bt-enable-lpd=true",
+            "--enable-dht=true",
+            "--enable-peer-exchange=true",
+            "--max-connection-per-server=8",
+            "--split=8",
+            "--file-allocation=none",
+            "--continue=true",
+        ]
 
         if torrent_source.startswith('magnet:'):
-            self._handle = lt.add_magnet_uri(self._session, torrent_source, params)
-        elif torrent_source.startswith('http'):
-            # Download .torrent file first
-            import requests
-            r = requests.get(torrent_source, timeout=30)
-            if r.status_code != 200:
-                self._error = f"Не удалось скачать .torrent: HTTP {r.status_code}"
-                return False
-            ti = lt.torrent_info(lt.bdecode(r.content))
-            params['ti'] = ti
-            self._handle = self._session.add_torrent(params)
-        elif os.path.isfile(torrent_source):
-            ti = lt.torrent_info(torrent_source)
-            params['ti'] = ti
-            self._handle = self._session.add_torrent(params)
+            cmd.append(torrent_source)
+        elif torrent_source.endswith('.torrent') or os.path.isfile(torrent_source):
+            cmd.extend(["--torrent-file", torrent_source])
         else:
-            self._error = "Неверный источник торрента"
+            cmd.append(torrent_source)
+
+        try:
+            self._process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=1, universal_newlines=True,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            self._active = True
+            self._paused = False
+            # Start output reader thread
+            self._last_status = {"state": "starting", "progress": 0}
+            t = threading.Thread(target=self._read_output, daemon=True)
+            t.start()
+            return True
+        except Exception as e:
+            self._error = str(e)
             return False
 
-        self._active = True
-        self._paused = False
-        return True
+    def _read_output(self):
+        """Parse aria2c stdout for progress info."""
+        for line in self._process.stdout:
+            line = line.strip()
+            # aria2c progress line: [#hash SIZE/TOTAL(XX%) CN:X DL:XXXKiB ETA:Xm]
+            if line.startswith('[#') or line.startswith('[SEED'):
+                self._parse_progress_line(line)
+            elif 'Download complete' in line or 'SEED' in line:
+                self._last_status = {"state": "finished", "progress": 100}
+
+        # Process ended
+        if self._active and self._last_status.get("state") != "finished":
+            rc = self._process.wait()
+            if rc == 0:
+                self._last_status = {"state": "finished", "progress": 100}
+            elif not self._paused:
+                self._last_status = {"state": "error", "error": f"aria2c завершился с кодом {rc}"}
+        self._active = False
+
+    def _parse_progress_line(self, line):
+        """Parse: [#abc123 500MiB/2.5GiB(19%) CN:5 DL:12MiB ETA:3m2s]"""
+        import re
+        try:
+            pct_m = re.search(r'\((\d+)%\)', line)
+            dl_m = re.search(r'DL:([0-9.]+)(\w+)', line)
+            eta_m = re.search(r'ETA:(\S+)\]', line)
+            size_m = re.search(r'(\d+(?:\.\d+)?)((?:KiB|MiB|GiB))/(\d+(?:\.\d+)?)((?:KiB|MiB|GiB))', line)
+
+            progress = float(pct_m.group(1)) if pct_m else self._last_status.get("progress", 0)
+
+            speed = 0
+            if dl_m:
+                val = float(dl_m.group(1))
+                unit = dl_m.group(2)
+                if 'GiB' in unit: speed = val * 1024
+                elif 'MiB' in unit: speed = val
+                elif 'KiB' in unit: speed = val / 1024
+
+            eta = eta_m.group(1) if eta_m else "--:--"
+
+            downloaded_mb = 0
+            total_mb = 0
+            if size_m:
+                downloaded_mb = self._to_mb(float(size_m.group(1)), size_m.group(2))
+                total_mb = self._to_mb(float(size_m.group(3)), size_m.group(4))
+
+            seeds_m = re.search(r'SD:(\d+)', line)
+            seeds = int(seeds_m.group(1)) if seeds_m else 0
+
+            self._last_status = {
+                "state": "paused" if self._paused else "downloading",
+                "progress": round(progress, 1),
+                "downloaded_mb": round(downloaded_mb, 1),
+                "total_mb": round(total_mb, 1),
+                "speed_mb": round(speed, 2),
+                "eta": eta,
+                "seeds": seeds,
+                "peers": 0,
+            }
+        except Exception:
+            pass
+
+    def _to_mb(self, val, unit):
+        if 'GiB' in unit: return val * 1024
+        if 'MiB' in unit: return val
+        if 'KiB' in unit: return val / 1024
+        return val
 
     def pause(self):
-        if self._handle:
-            self._handle.pause()
+        if self._process and self._active:
+            self._process.terminate()
             self._paused = True
+            self._active = False
 
     def resume(self):
-        if self._handle:
-            self._handle.resume()
-            self._paused = False
+        if self._paused and self._torrent_source:
+            self.start(self._torrent_source, self._save_path)
 
     def cancel(self):
-        if self._handle and self._session:
-            self._session.remove_torrent(self._handle)
-        self._handle = None
+        if self._process:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+        self._process = None
         self._active = False
         self._paused = False
+        self._last_status = {"state": "idle"}
 
     def status(self):
-        """Return current download status as dict."""
         if self._error:
             return {"state": "error", "error": self._error}
-        if not self._handle or not self._active:
-            return {"state": "idle"}
-
-        s = self._handle.status()
-        state_map = {0: 'checking', 1: 'metadata', 2: 'downloading',
-                     3: 'downloading', 4: 'finished', 5: 'seeding'}
-        state = state_map.get(s.state, 'unknown')
-
-        if self._paused:
-            state = 'paused'
-
-        total = s.total_wanted or 1
-        downloaded = s.total_wanted_done
-        progress = downloaded / total
-
-        # Speed
-        down_speed = s.download_rate / 1024 / 1024  # MB/s
-        # ETA
-        if s.download_rate > 0:
-            remaining = (total - downloaded) / s.download_rate
-            eta_min = int(remaining / 60)
-            eta_sec = int(remaining % 60)
-            eta = f"{eta_min}:{eta_sec:02d}"
-        else:
-            eta = "--:--"
-
-        return {
-            "state": state,
-            "progress": round(progress * 100, 1),
-            "downloaded_mb": round(downloaded / 1048576, 1),
-            "total_mb": round(total / 1048576, 1),
-            "speed_mb": round(down_speed, 2),
-            "eta": eta,
-            "seeds": s.num_seeds,
-            "peers": s.num_peers,
-        }
+        if hasattr(self, '_last_status'):
+            return self._last_status
+        return {"state": "idle"}
 
 _torrent_mgr = TorrentManager()
 
@@ -857,20 +915,23 @@ class Api:
         if not torrent_src:
             return json.dumps({"ok": False, "msg": "Торрент не настроен для этого проекта"})
 
-        # Ask user where to save
-        save_path = self.settings.get("game_paths", {}).get(pid, "")
-        if not save_path:
-            result = self.window.create_file_dialog(webview.FOLDER_DIALOG, directory="")
-            if result and len(result) > 0:
-                save_path = result[0]
-                self.settings.setdefault("game_paths", {})[pid] = save_path
-                save_settings(self.settings)
-            else:
-                return json.dumps({"ok": False, "msg": "Не выбрана папка"})
+        # Always ask user where to save (install = new download)
+        result = self.window.create_file_dialog(webview.FOLDER_DIALOG, directory="")
+        if not result or len(result) == 0:
+            return json.dumps({"ok": False, "msg": "Не выбрана папка"})
+        save_path = result[0]
 
         ok = _torrent_mgr.start(torrent_src, save_path)
         if ok:
-            return json.dumps({"ok": True, "save_path": save_path})
+            # Torrent creates subfolder (e.g. "WoW 3.3.5a") inside save_path.
+            # Detect the torrent root folder name from the .torrent file.
+            game_dir = save_path
+            torrent_name = proj.get("torrent_folder", "")
+            if torrent_name:
+                game_dir = os.path.join(save_path, torrent_name)
+            self.settings.setdefault("game_paths", {})[pid] = game_dir
+            save_settings(self.settings)
+            return json.dumps({"ok": True, "save_path": game_dir})
         return json.dumps({"ok": False, "msg": _torrent_mgr._error or "Ошибка запуска"})
 
     def pause_download(self):

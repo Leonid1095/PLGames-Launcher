@@ -1,7 +1,7 @@
 # ⚔ PLGames Launcher
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.1.0-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.0-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10+-yellow?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square&logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
@@ -128,8 +128,8 @@ build.bat
 
 Для релиза:
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+git tag v0.2.0
+git push origin v0.2.0
 # Загрузить .exe в GitHub Release
 ```
 
