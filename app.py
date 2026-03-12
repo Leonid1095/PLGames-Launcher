@@ -19,8 +19,8 @@ import time
 # ---------------------------------------------------------------------------
 
 LAUNCHER_VERSION = "0.2.0"
-API_BASE = "https://lkds-room.online"
-API_AUTH = "https://lkds-room.online"  # port 3000 closed externally, proxied via main domain
+API_BASE = "https://plgames-wow.ru"
+API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
 GITHUB_REPO = "Leonid1095/PLGames-Launcher"
 GITHUB_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -40,12 +40,12 @@ PROJECTS = [
             "https://wow.zamimg.com/uploads/screenshots/normal/522115-icecrown-citadel.jpg",
             "https://wow.zamimg.com/uploads/screenshots/normal/323283-dalaran.jpg",
         ],
-        "realmlist": "set realmlist lkds-room.online",
+        "realmlist": "set realmlist plgames-wow.ru",
         "exe": "wow.exe",
         "torrent_url": "WoW 3.3.5a.torrent",
         "torrent_folder": "WoW 3.3.5a",
         "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
-        "news_url": f"{API_BASE}/api/content/phases",
+        "news_url": f"{API_BASE}/api/launcher/news",
         "status_url": f"{API_BASE}/api/status",
         "sso_start_url": f"{API_AUTH}/api/auth/sso/start",
         "sso_poll_url": f"{API_AUTH}/api/auth/sso/poll",
@@ -346,6 +346,10 @@ class TorrentManager:
             "--listen-port=6881-6999",
             "--dht-listen-port=6881-6999",
         ]
+
+        # Log aria2c output to file for debugging
+        log_file = os.path.join(save_path, "aria2c_log.txt")
+        cmd.extend(["--log", log_file, "--log-level=info"])
 
         # aria2c expects torrent file or magnet as positional argument
         cmd.append(torrent_source)
