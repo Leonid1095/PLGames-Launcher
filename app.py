@@ -18,7 +18,7 @@ import time
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.2.0"
+LAUNCHER_VERSION = "0.2.1"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
@@ -845,21 +845,54 @@ class Api:
         return LAUNCHER_VERSION
 
     def check_update(self):
-        """Check GitHub Releases for a newer version."""
+        """Check for newer version via server API first, then GitHub Releases."""
+        import requests
+
+        def _ver_tuple(v):
+            try:
+                return tuple(int(x) for x in v.split("."))
+            except Exception:
+                return (0,)
+
+        def _is_newer(remote, current):
+            return _ver_tuple(remote) > _ver_tuple(current)
+
+        # --- Try our own server first (avoids GitHub DNS issues) ---
         try:
-            import requests
+            r = requests.get(f"{API_BASE}/api/launcher/version", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                remote_ver = str(data.get("version", "")).lstrip("v")
+                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
+                    return json.dumps({
+                        "has_update": True,
+                        "current": LAUNCHER_VERSION,
+                        "latest": remote_ver,
+                        "changelog": data.get("changelog", "Улучшения и исправления"),
+                        "download_url": data.get("download_url", ""),
+                        "html_url": data.get("html_url", ""),
+                    })
+        except Exception:
+            pass
+
+        # --- Fallback: GitHub Releases API ---
+        try:
             r = requests.get(GITHUB_RELEASE_URL, timeout=5, headers={"Accept": "application/vnd.github.v3+json"})
             if r.status_code == 200:
                 data = r.json()
                 tag = data.get("tag_name", "")
                 remote_ver = tag.lstrip("v")
-                if remote_ver and remote_ver != LAUNCHER_VERSION:
-                    # Find .exe asset
+                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
                     download_url = ""
                     for asset in data.get("assets", []):
-                        if asset["name"].lower().endswith(".exe"):
+                        if asset["name"].lower().endswith(".exe") and "setup" in asset["name"].lower():
                             download_url = asset["browser_download_url"]
                             break
+                    if not download_url:
+                        for asset in data.get("assets", []):
+                            if asset["name"].lower().endswith(".exe"):
+                                download_url = asset["browser_download_url"]
+                                break
                     return json.dumps({
                         "has_update": True,
                         "current": LAUNCHER_VERSION,
@@ -870,6 +903,7 @@ class Api:
                     })
         except Exception:
             pass
+
         return json.dumps({"has_update": False, "current": LAUNCHER_VERSION})
 
     def download_update(self, url):
@@ -878,7 +912,7 @@ class Api:
             return json.dumps({"ok": False, "msg": "Нет ссылки"})
         try:
             import requests
-            r = requests.get(url, stream=True, timeout=60)
+            r = requests.get(url, stream=True, timeout=300)
             if r.status_code == 200:
                 # Save next to current exe
                 if getattr(sys, 'frozen', False):
@@ -1435,6 +1469,21 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .btn-update:hover{background:var(--accent-dark)}
 .btn-update:disabled{opacity:0.5;cursor:default}
 
+/* Top update notification bar */
+.update-topbar{
+  display:none;position:fixed;top:32px;left:220px;right:0;z-index:100;
+  background:linear-gradient(90deg,rgba(0,174,255,0.15),rgba(0,174,255,0.05));
+  border-bottom:1px solid rgba(0,174,255,0.3);
+  padding:6px 16px;font-size:12px;color:var(--accent);
+  align-items:center;gap:12px;
+}
+.update-topbar.show{display:flex}
+.update-topbar button{
+  padding:3px 12px;border:1px solid var(--accent);border-radius:4px;
+  background:transparent;color:var(--accent);font-size:11px;cursor:pointer;
+}
+.update-topbar button:hover{background:var(--accent);color:#fff}
+
 /* Animations */
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .fade-in{animation:fadeIn .3s ease}
@@ -1470,6 +1519,14 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
       <svg width="11" height="11" viewBox="0 0 11 11"><line x1="2" y1="2" x2="9" y2="9" stroke="currentColor" stroke-width="1.2"/><line x1="9" y1="2" x2="2" y2="9" stroke="currentColor" stroke-width="1.2"/></svg>
     </button>
   </div>
+</div>
+
+<!-- UPDATE NOTIFICATION BAR -->
+<div class="update-topbar" id="update-topbar">
+  <span>&#x1f4e6; Доступно обновление <b id="update-topbar-ver"></b></span>
+  <button onclick="doUpdate()">Обновить сейчас</button>
+  <span style="flex:1"></span>
+  <span style="cursor:pointer;opacity:0.6" onclick="this.parentElement.classList.remove('show')">&#x2715;</span>
 </div>
 
 <!-- GAME ICON BAR -->
@@ -2246,11 +2303,14 @@ let pendingUpdateUrl = '';
 async function checkForUpdate() {
   try {
     const res = JSON.parse(await pywebview.api.check_update());
-    if (res.has_update) {
+    if (res.has_update && res.download_url) {
       pendingUpdateUrl = res.download_url;
       document.getElementById('update-ver').textContent = 'v' + res.latest;
       document.getElementById('update-changelog').textContent = res.changelog || 'Улучшения и исправления';
       document.getElementById('update-banner').style.display = '';
+      // Show top notification bar
+      document.getElementById('update-topbar-ver').textContent = 'v' + res.latest;
+      document.getElementById('update-topbar').classList.add('show');
     }
   } catch(e) {}
 }
