@@ -42,8 +42,8 @@ PROJECTS = [
         ],
         "realmlist": "set realmlist plgames-wow.ru",
         "exe": "wow.exe",
-        "torrent_url": "WoW 3.3.5a.torrent",
-        "torrent_folder": "WoW 3.3.5a",
+        "torrent_url": "PLGames_Wow3.3.5.torrent",
+        "torrent_folder": "",
         "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
         "news_url": f"{API_BASE}/api/launcher/news",
         "status_url": f"{API_BASE}/api/status",
@@ -345,6 +345,8 @@ class TorrentManager:
             "--continue=true",
             "--listen-port=6881-6999",
             "--dht-listen-port=6881-6999",
+            "--bt-request-peer-speed-limit=0",
+            "--bt-stop-timeout=0",
         ]
 
         # Log aria2c output to file for debugging
@@ -469,6 +471,123 @@ class TorrentManager:
         return {"state": "idle"}
 
 _torrent_mgr = TorrentManager()
+
+
+class SeedManager:
+    """Manages seeding via aria2c subprocess — runs independently from downloads."""
+
+    def __init__(self):
+        self._process = None
+        self._active = False
+        self._upload_speed = 0
+        self._peers = 0
+
+    def _aria2c_path(self):
+        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(launcher_dir, "aria2c.exe")
+
+    def start(self, torrent_source, data_dir):
+        """Start seeding. data_dir is the PARENT folder containing the torrent's root folder."""
+        if self._active:
+            return True  # already seeding
+
+        aria2c = self._aria2c_path()
+        if not os.path.isfile(aria2c):
+            return False
+
+        # Resolve relative .torrent paths
+        if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
+            launcher_dir = os.path.dirname(aria2c)
+            resolved = os.path.join(launcher_dir, torrent_source)
+            if os.path.isfile(resolved):
+                torrent_source = resolved
+
+        trackers = ",".join([
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://open.stealth.si:80/announce",
+            "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://open.demonii.com:1337/announce",
+        ])
+        cmd = [
+            aria2c,
+            "--dir", data_dir,
+            "--bt-seed-unverified=true",
+            "--check-integrity=true",
+            "--summary-interval=5",
+            "--console-log-level=notice",
+            "--bt-enable-lpd=true",
+            "--enable-dht=true",
+            "--enable-peer-exchange=true",
+            f"--bt-tracker={trackers}",
+            "--listen-port=6881-6999",
+            "--dht-listen-port=6881-6999",
+            "--max-upload-limit=0",
+            "--bt-max-peers=100",
+            "--file-allocation=none",
+            "--seed-ratio=0.0",
+            torrent_source,
+        ]
+
+        try:
+            self._process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=1, universal_newlines=True,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            self._active = True
+            self._upload_speed = 0
+            self._peers = 0
+            t = threading.Thread(target=self._read_output, daemon=True)
+            t.start()
+            return True
+        except Exception:
+            return False
+
+    def _read_output(self):
+        for line in self._process.stdout:
+            line = line.strip()
+            if line.startswith('[SEED') or line.startswith('[#'):
+                self._parse_line(line)
+        self._active = False
+
+    def _parse_line(self, line):
+        try:
+            # UL:XXXKiB or UL:1.5MiB
+            ul_m = re.search(r'UL:([0-9.]+)(B|KiB|MiB|GiB)', line)
+            if ul_m:
+                val = float(ul_m.group(1))
+                unit = ul_m.group(2)
+                if unit == 'GiB': self._upload_speed = val * 1024
+                elif unit == 'MiB': self._upload_speed = val
+                elif unit == 'KiB': self._upload_speed = val / 1024
+                else: self._upload_speed = val / (1024 * 1024)
+            cn_m = re.search(r'CN:(\d+)', line)
+            if cn_m:
+                self._peers = int(cn_m.group(1))
+        except Exception:
+            pass
+
+    def stop(self):
+        if self._process:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+        self._process = None
+        self._active = False
+        self._upload_speed = 0
+        self._peers = 0
+
+    def status(self):
+        return {
+            "active": self._active,
+            "upload_speed_mb": round(self._upload_speed, 2),
+            "peers": self._peers,
+        }
+
+
+_seed_mgr = SeedManager()
 
 # ---------------------------------------------------------------------------
 # JS API (exposed to webview)
@@ -1002,6 +1121,37 @@ class Api:
     def get_download_status(self):
         return json.dumps(_torrent_mgr.status())
 
+    # ---- SEEDING ----
+
+    def start_seeding(self, pid):
+        """Start seeding the installed game files for a project."""
+        proj = next((p for p in self.projects if p["id"] == pid), None)
+        if not proj:
+            return json.dumps({"ok": False, "msg": "Проект не найден"})
+        torrent_src = proj.get("torrent_url", "")
+        if not torrent_src:
+            return json.dumps({"ok": False, "msg": "Торрент не настроен"})
+        game_path = self.settings.get("game_paths", {}).get(pid)
+        if not game_path or not os.path.isdir(game_path):
+            return json.dumps({"ok": False, "msg": "Игра не установлена"})
+        # data_dir is the PARENT of the game folder (aria2c needs to see the torrent root folder)
+        torrent_folder = proj.get("torrent_folder", "")
+        if torrent_folder and game_path.endswith(torrent_folder):
+            data_dir = os.path.dirname(game_path)
+        else:
+            data_dir = game_path
+        ok = _seed_mgr.start(torrent_src, data_dir)
+        if ok:
+            return json.dumps({"ok": True})
+        return json.dumps({"ok": False, "msg": "Не удалось запустить раздачу"})
+
+    def stop_seeding(self):
+        _seed_mgr.stop()
+        return json.dumps({"ok": True})
+
+    def get_seed_status(self):
+        return json.dumps(_seed_mgr.status())
+
     def minimize_window(self):
         self.window.minimize()
 
@@ -1012,6 +1162,7 @@ class Api:
             self.window.maximize()
 
     def close_window(self):
+        _seed_mgr.stop()
         self.window.destroy()
 
 # ---------------------------------------------------------------------------
@@ -1282,6 +1433,22 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
   transition:all .2s;flex-shrink:0;
 }
 .btn-install:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(34,197,94,0.3)}
+.seed-wrap{display:none;align-items:center;gap:8px;flex-shrink:0}
+.seed-wrap.visible{display:flex}
+.seed-toggle{
+  position:relative;width:36px;height:20px;border-radius:10px;
+  background:rgba(255,255,255,0.1);border:none;cursor:pointer;
+  transition:background .2s;padding:0;flex-shrink:0;
+}
+.seed-toggle::after{
+  content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:50%;background:var(--text-dim);transition:all .2s;
+}
+.seed-toggle.on{background:rgba(34,197,94,0.4)}
+.seed-toggle.on::after{left:18px;background:#22c55e}
+.seed-label{font-size:11px;color:var(--text-dim);cursor:pointer;user-select:none;white-space:nowrap}
+.seed-toggle.on~.seed-label{color:#22c55e}
+.seed-info{font-size:10px;color:var(--text-dim);white-space:nowrap}
 
 /* ===== RIGHT PANEL (server info / social) ===== */
 .right-panel{
@@ -1601,6 +1768,11 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
         <button class="play-settings-btn" onclick="showPage('settings')" title="Настройки">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
+        <div class="seed-wrap" id="seed-wrap">
+          <button class="seed-toggle" id="seed-toggle" onclick="toggleSeeding()" title="Раздавать клиент другим игрокам"></button>
+          <span class="seed-label" onclick="toggleSeeding()">Раздача</span>
+          <span class="seed-info" id="seed-info"></span>
+        </div>
         <button class="btn-play" id="btn-play" onclick="launchGame()">ИГРАТЬ</button>
         <button class="btn-install" id="btn-install" style="display:none" onclick="startInstall()">УСТАНОВИТЬ</button>
       </div>
@@ -1864,8 +2036,10 @@ async function loadGameView() {
 
   const btn = document.getElementById('btn-play');
   const btnInstall = document.getElementById('btn-install');
+  const seedWrap = document.getElementById('seed-wrap');
   const dlBar = document.getElementById('download-bar');
   btnInstall.style.display = 'none';
+  seedWrap.classList.remove('visible');
   dlBar.className = 'download-bar';
   if (!p.has_exe) {
     btn.className = 'btn-play coming';
@@ -1886,8 +2060,11 @@ async function loadGameView() {
       btn.textContent = 'ИГРАТЬ';
       btn.disabled = false;
       btn.style.display = '';
+      seedWrap.classList.add('visible');
       document.getElementById('path-section').style.display = '';
       document.getElementById('play-path').textContent = gp;
+      // Check if already seeding
+      updateSeedButton();
     }
   }
   document.getElementById('launch-msg').textContent = '';
@@ -2294,6 +2471,58 @@ async function cancelDownload() {
   await pywebview.api.cancel_download();
   hideDownloadBar();
   document.getElementById('btn-install').style.display = '';
+}
+
+// ==================== SEEDING ====================
+
+let seedPollTimer = null;
+
+async function toggleSeeding() {
+  const toggle = document.getElementById('seed-toggle');
+  if (toggle.classList.contains('on')) {
+    await pywebview.api.stop_seeding();
+    toggle.classList.remove('on');
+    document.getElementById('seed-info').textContent = '';
+    if (seedPollTimer) { clearInterval(seedPollTimer); seedPollTimer = null; }
+  } else {
+    const res = JSON.parse(await pywebview.api.start_seeding(activeProject.id));
+    if (res.ok) {
+      toggle.classList.add('on');
+      seedPollTimer = setInterval(pollSeedStatus, 3000);
+    } else {
+      alert(res.msg || 'Ошибка запуска раздачи');
+    }
+  }
+}
+
+async function pollSeedStatus() {
+  try {
+    const s = JSON.parse(await pywebview.api.get_seed_status());
+    const toggle = document.getElementById('seed-toggle');
+    if (!s.active) {
+      toggle.classList.remove('on');
+      document.getElementById('seed-info').textContent = '';
+      if (seedPollTimer) { clearInterval(seedPollTimer); seedPollTimer = null; }
+      return;
+    }
+    let info = '';
+    if (s.upload_speed_mb > 0) info += '↑ ' + s.upload_speed_mb.toFixed(1) + ' MB/s';
+    if (s.peers > 0) info += (info ? ' • ' : '') + s.peers + ' пир.';
+    document.getElementById('seed-info').textContent = info;
+  } catch(e) {}
+}
+
+async function updateSeedButton() {
+  try {
+    const s = JSON.parse(await pywebview.api.get_seed_status());
+    const toggle = document.getElementById('seed-toggle');
+    if (s.active) {
+      toggle.classList.add('on');
+      if (!seedPollTimer) seedPollTimer = setInterval(pollSeedStatus, 3000);
+    } else {
+      toggle.classList.remove('on');
+    }
+  } catch(e) {}
 }
 
 // ==================== AUTO-UPDATE ====================
