@@ -636,6 +636,7 @@ class Api:
             "subtitle": p["subtitle"], "type": p["type"], "description": p["description"],
             "has_exe": bool(p.get("exe")),
             "icon_url": p.get("icon_url", ""),
+            "bg_images": p.get("bg_images", []),
         } for p in self.projects])
 
     def refresh_manifest(self):
@@ -1971,11 +1972,12 @@ const RESOLUTIONS = %RESOLUTIONS%;
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
 const TAG_CLASSES = {'Анонс':'tag-announce','Обновление':'tag-update','Исправление':'tag-fix','Событие':'tag-event'};
 
-let HERO_IMAGES = [
+const DEFAULT_HERO_IMAGES = [
   'https://wow.zamimg.com/uploads/screenshots/normal/522757-the-lich-king.jpg',
   'https://wow.zamimg.com/uploads/screenshots/normal/522115-icecrown-citadel.jpg',
   'https://wow.zamimg.com/uploads/screenshots/normal/323283-dalaran.jpg',
 ];
+let HERO_IMAGES = [...DEFAULT_HERO_IMAGES];
 let cachedNewsFeed = null;
 
 async function init() {
@@ -2025,11 +2027,17 @@ async function selectProject(pid, save=true) {
     b.classList.toggle('active', b.dataset.pid === activeProject.id);
   });
 
+  // Update hero images from project or news
+  HERO_IMAGES = (activeProject.bg_images && activeProject.bg_images.length)
+    ? [...activeProject.bg_images]
+    : [...DEFAULT_HERO_IMAGES];
+
   loadGameView();
   loadNewsRow();
   loadNews();
   loadSettings();
   checkStatus();
+  startHeroSlider();
 }
 
 function showPage(page) {
@@ -2197,10 +2205,19 @@ async function loadNewsRow() {
   try {
     const data = JSON.parse(await pywebview.api.get_news(activeProject.id));
     const items = (data.news || []).slice(0, 3);
+
+    // If news have images, use them for hero slider too
+    const newsImages = items.map(n => n.image).filter(Boolean);
+    if (newsImages.length) {
+      HERO_IMAGES = newsImages;
+      startHeroSlider();
+    }
+
     items.forEach((item, i) => {
+      const cardImg = item.image || HERO_IMAGES[i % HERO_IMAGES.length] || '';
       row.innerHTML += `
         <div class="news-card-mini" onclick="showPage('news')">
-          <div class="news-card-img" style="background-image:url(${HERO_IMAGES[i % HERO_IMAGES.length]})"></div>
+          <div class="news-card-img" style="background-image:url(${cardImg})"></div>
           <div class="news-card-body">
             <div class="news-card-tag">${esc(item.tag || 'Новость')}</div>
             <div class="news-card-title">${esc(item.title)}</div>
@@ -2219,8 +2236,10 @@ async function loadNews() {
     grid.innerHTML = '';
     items.forEach(item => {
       const tagClass = TAG_CLASSES[item.tag] || 'tag-announce';
+      const imgHtml = item.image ? `<div class="news-card-full-img" style="background-image:url(${item.image})"></div>` : '';
       grid.innerHTML += `
         <div class="news-card-full">
+          ${imgHtml}
           <div class="news-top">
             <span class="news-tag ${tagClass}">${esc(item.tag)}</span>
             <span class="news-date">${esc(item.date)}</span>
