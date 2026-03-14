@@ -18,7 +18,7 @@ import time
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.2.1"
+LAUNCHER_VERSION = "0.2.2"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
@@ -1031,7 +1031,10 @@ class Api:
             return json.dumps({"ok": False, "msg": "Нет ссылки"})
         try:
             import requests
-            r = requests.get(url, stream=True, timeout=300)
+            from requests.adapters import HTTPAdapter
+            session = requests.Session()
+            # Use longer timeout — file is ~70MB
+            r = session.get(url, stream=True, timeout=600, allow_redirects=True)
             if r.status_code == 200:
                 # Save next to current exe
                 if getattr(sys, 'frozen', False):
@@ -1055,19 +1058,36 @@ class Api:
     def apply_update(self, update_path):
         """Replace current exe with update and restart."""
         try:
+            if not os.path.isfile(update_path):
+                return json.dumps({"ok": False, "msg": f"Файл обновления не найден: {update_path}"})
+            fsize = os.path.getsize(update_path)
+            if fsize < 1_000_000:
+                return json.dumps({"ok": False, "msg": f"Файл обновления слишком мал ({fsize} байт), возможно ошибка загрузки"})
             if getattr(sys, 'frozen', False):
                 current_exe = sys.executable
                 backup = current_exe + ".bak"
-                # Create a batch script that waits, replaces, and restarts
                 bat = os.path.join(os.path.dirname(current_exe), "_update.bat")
-                with open(bat, "w") as f:
+                with open(bat, "w", encoding="utf-8") as f:
                     f.write(f'@echo off\n')
-                    f.write(f'timeout /t 2 /nobreak >nul\n')
+                    f.write(f'echo Обновление PLGames Launcher...\n')
+                    f.write(f'timeout /t 3 /nobreak >nul\n')
                     f.write(f'del "{backup}" 2>nul\n')
-                    f.write(f'move "{current_exe}" "{backup}"\n')
-                    f.write(f'move "{update_path}" "{current_exe}"\n')
+                    f.write(f'move /Y "{current_exe}" "{backup}"\n')
+                    f.write(f'if errorlevel 1 (\n')
+                    f.write(f'  echo Ошибка: не удалось переименовать текущий файл\n')
+                    f.write(f'  pause\n')
+                    f.write(f'  exit /b 1\n')
+                    f.write(f')\n')
+                    f.write(f'move /Y "{update_path}" "{current_exe}"\n')
+                    f.write(f'if errorlevel 1 (\n')
+                    f.write(f'  echo Ошибка: не удалось переместить обновление\n')
+                    f.write(f'  move /Y "{backup}" "{current_exe}" 2>nul\n')
+                    f.write(f'  pause\n')
+                    f.write(f'  exit /b 1\n')
+                    f.write(f')\n')
                     f.write(f'start "" "{current_exe}"\n')
                     f.write(f'del "%~f0"\n')
+                _seed_mgr.stop()
                 subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
                 self.window.destroy()
                 return json.dumps({"ok": True})
@@ -1689,7 +1709,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 </div>
 
 <!-- UPDATE NOTIFICATION BAR -->
-<div class="update-topbar" id="update-topbar">
+<div class="update-topbar" id="update-topbar" style="display:none!important">
   <span>&#x1f4e6; Доступно обновление <b id="update-topbar-ver"></b></span>
   <button onclick="doUpdate()">Обновить сейчас</button>
   <span style="flex:1"></span>
