@@ -483,6 +483,11 @@ class SeedManager:
         self._peers = 0
 
     def _aria2c_path(self):
+        # PyInstaller bundles aria2c into _MEIPASS temp dir
+        if getattr(sys, '_MEIPASS', None):
+            p = os.path.join(sys._MEIPASS, "aria2c.exe")
+            if os.path.isfile(p):
+                return p
         launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         return os.path.join(launcher_dir, "aria2c.exe")
 
@@ -497,10 +502,17 @@ class SeedManager:
 
         # Resolve relative .torrent paths
         if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
-            launcher_dir = os.path.dirname(aria2c)
-            resolved = os.path.join(launcher_dir, torrent_source)
-            if os.path.isfile(resolved):
-                torrent_source = resolved
+            # Check _MEIPASS first (PyInstaller bundled files), then exe dir
+            search_paths = []
+            if getattr(sys, '_MEIPASS', None):
+                search_paths.append(sys._MEIPASS)
+            search_paths.append(os.path.dirname(aria2c))
+            search_paths.append(os.path.dirname(os.path.abspath(__file__)))
+            for sp in search_paths:
+                resolved = os.path.join(sp, torrent_source)
+                if os.path.isfile(resolved):
+                    torrent_source = resolved
+                    break
 
         trackers = ",".join([
             "udp://tracker.opentrackr.org:1337/announce",
@@ -521,15 +533,25 @@ class SeedManager:
             "--enable-dht=true",
             "--enable-peer-exchange=true",
             f"--bt-tracker={trackers}",
-            "--listen-port=6881-6999",
-            "--dht-listen-port=6881-6999",
+            "--listen-port=16881-16999",
+            "--dht-listen-port=16881-16999",
             "--max-upload-limit=0",
             "--bt-max-peers=100",
             "--file-allocation=none",
             "--log", log_file,
-            "--log-level=info",
+            "--log-level=debug",
             torrent_source,
         ]
+
+        # Debug: log the command
+        try:
+            with open(log_file, "a", encoding="utf-8") as lf:
+                lf.write(f"\n=== SEED CMD: {' '.join(cmd)}\n")
+                lf.write(f"=== CWD: {os.getcwd()}\n")
+                lf.write(f"=== TORRENT EXISTS: {os.path.isfile(torrent_source)}\n")
+                lf.write(f"=== DATA DIR EXISTS: {os.path.isdir(data_dir)}\n")
+        except Exception:
+            pass
 
         try:
             self._process = subprocess.Popen(
@@ -540,10 +562,12 @@ class SeedManager:
             self._active = True
             self._upload_speed = 0
             self._peers = 0
+            self._last_error = ''
             t = threading.Thread(target=self._read_output, daemon=True)
             t.start()
             return True
-        except Exception:
+        except Exception as e:
+            self._last_error = str(e)
             return False
 
     def _read_output(self):
@@ -551,6 +575,10 @@ class SeedManager:
             line = line.strip()
             if line.startswith('[SEED') or line.startswith('[#'):
                 self._parse_line(line)
+            elif 'errorCode=' in line or 'Exception' in line or 'error' in line.lower():
+                self._last_error = line
+        rc = self._process.wait()
+        self._last_error = getattr(self, '_last_error', '') or f'aria2c exited with code {rc}'
         self._active = False
 
     def _parse_line(self, line):
@@ -586,6 +614,7 @@ class SeedManager:
             "active": self._active,
             "upload_speed_mb": round(self._upload_speed, 2),
             "peers": self._peers,
+            "error": getattr(self, '_last_error', ''),
         }
 
 
@@ -1810,9 +1839,9 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
         <button class="play-settings-btn" onclick="showPage('settings')" title="Настройки">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
-        <div class="seed-wrap" id="seed-wrap">
-          <button class="seed-toggle" id="seed-toggle" onclick="toggleSeeding()" title="Раздавать клиент другим игрокам"></button>
-          <span class="seed-label" onclick="toggleSeeding()">Раздача</span>
+        <div class="seed-wrap" id="seed-wrap" onclick="toggleSeeding()" style="cursor:pointer" title="Раздавать клиент другим игрокам">
+          <button class="seed-toggle" id="seed-toggle"></button>
+          <span class="seed-label">Раздача</span>
           <span class="seed-info" id="seed-info"></span>
         </div>
         <button class="btn-play" id="btn-play" onclick="launchGame()">ИГРАТЬ</button>
@@ -2519,21 +2548,28 @@ async function cancelDownload() {
 
 let seedPollTimer = null;
 
+let seedBusy = false;
 async function toggleSeeding() {
+  if (seedBusy) return;
+  seedBusy = true;
   const toggle = document.getElementById('seed-toggle');
-  if (toggle.classList.contains('on')) {
-    await pywebview.api.stop_seeding();
-    toggle.classList.remove('on');
-    document.getElementById('seed-info').textContent = '';
-    if (seedPollTimer) { clearInterval(seedPollTimer); seedPollTimer = null; }
-  } else {
-    const res = JSON.parse(await pywebview.api.start_seeding(activeProject.id));
-    if (res.ok) {
-      toggle.classList.add('on');
-      seedPollTimer = setInterval(pollSeedStatus, 3000);
+  try {
+    if (toggle.classList.contains('on')) {
+      await pywebview.api.stop_seeding();
+      toggle.classList.remove('on');
+      document.getElementById('seed-info').textContent = '';
+      if (seedPollTimer) { clearInterval(seedPollTimer); seedPollTimer = null; }
     } else {
-      alert(res.msg || 'Ошибка запуска раздачи');
+      const res = JSON.parse(await pywebview.api.start_seeding(activeProject.id));
+      if (res.ok) {
+        toggle.classList.add('on');
+        seedPollTimer = setInterval(pollSeedStatus, 5000);
+      } else {
+        alert(res.msg || 'Ошибка запуска раздачи');
+      }
     }
+  } finally {
+    seedBusy = false;
   }
 }
 
@@ -2543,7 +2579,7 @@ async function pollSeedStatus() {
     const toggle = document.getElementById('seed-toggle');
     if (!s.active) {
       toggle.classList.remove('on');
-      document.getElementById('seed-info').textContent = '';
+      document.getElementById('seed-info').textContent = s.error || '';
       if (seedPollTimer) { clearInterval(seedPollTimer); seedPollTimer = null; }
       return;
     }
