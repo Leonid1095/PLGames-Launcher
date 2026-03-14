@@ -509,6 +509,7 @@ class SeedManager:
             "udp://exodus.desync.com:6969/announce",
             "udp://open.demonii.com:1337/announce",
         ])
+        log_file = os.path.join(data_dir, "aria2c_seed_log.txt")
         cmd = [
             aria2c,
             "--dir", data_dir,
@@ -525,7 +526,8 @@ class SeedManager:
             "--max-upload-limit=0",
             "--bt-max-peers=100",
             "--file-allocation=none",
-            "--seed-ratio=0.0",
+            "--log", log_file,
+            "--log-level=info",
             torrent_source,
         ]
 
@@ -1151,15 +1153,35 @@ class Api:
         torrent_src = proj.get("torrent_url", "")
         if not torrent_src:
             return json.dumps({"ok": False, "msg": "Торрент не настроен"})
-        game_path = self.settings.get("game_paths", {}).get(pid)
-        if not game_path or not os.path.isdir(game_path):
-            return json.dumps({"ok": False, "msg": "Игра не установлена"})
-        # data_dir is the PARENT of the game folder (aria2c needs to see the torrent root folder)
-        torrent_folder = proj.get("torrent_folder", "")
-        if torrent_folder and game_path.endswith(torrent_folder):
-            data_dir = os.path.dirname(game_path)
-        else:
-            data_dir = game_path
+
+        # Try to find the torrent data automatically
+        # The torrent contains "PLGames_Wow3.3.5.rar" — look for it near game_path
+        game_path = self.settings.get("game_paths", {}).get(pid, "")
+        data_dir = ""
+        torrent_file_name = "PLGames_Wow3.3.5.rar"
+
+        # Check common locations
+        search_dirs = []
+        if game_path:
+            search_dirs.append(game_path)
+            search_dirs.append(os.path.dirname(game_path))
+        for d in search_dirs:
+            if os.path.isfile(os.path.join(d, torrent_file_name)):
+                data_dir = d
+                break
+
+        if not data_dir:
+            # Ask user to select folder containing the .rar file
+            result = self.window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                directory=os.path.dirname(game_path) if game_path else "",
+            )
+            if not result or len(result) == 0:
+                return json.dumps({"ok": False, "msg": "Не выбрана папка"})
+            data_dir = result[0]
+            if not os.path.isfile(os.path.join(data_dir, torrent_file_name)):
+                return json.dumps({"ok": False, "msg": f"Файл {torrent_file_name} не найден в выбранной папке"})
+
         ok = _seed_mgr.start(torrent_src, data_dir)
         if ok:
             return json.dumps({"ok": True})
