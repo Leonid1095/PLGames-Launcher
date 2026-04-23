@@ -1,0 +1,47 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build exe
+        run: |
+          pyinstaller --noconsole --onefile --name "PLGamesLauncher" `
+            --hidden-import "webview" `
+            --hidden-import "clr" `
+            --hidden-import "requests" `
+            --clean `
+            app.py
+
+      - name: Prepare release files
+        run: |
+          if (Test-Path "aria2c.exe") { Copy-Item "aria2c.exe" "dist\aria2c.exe" }
+          if (Test-Path "PLGames_Wow3.3.5.torrent") { Copy-Item "PLGames_Wow3.3.5.torrent" "dist\PLGames_Wow3.3.5.torrent" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PLGamesLauncher
+          path: dist/PLGamesLauncher.exe
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PLGamesLauncher.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
