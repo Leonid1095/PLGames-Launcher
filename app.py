@@ -93,9 +93,9 @@ PROJECTS = [
         "type": "Windrose Server",
         "description": {"ru": "Открытый сервер PLGames. До 10 игроков, регион CIS. Рестарт каждый день в 00:00 МСК.", "en": "PLGames open server. Up to 10 players, CIS region. Daily restart at 00:00 MSK."},
         "bg_images": [
-            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/header.jpg",
-            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/ss_1.jpg",
-            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/ss_2.jpg",
+            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_c3985ad9d779aa24d443732c0d8504922b397f06.1920x1080.jpg",
+            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_bb545eccc15b1de9e1785998735748b3b0f30837.1920x1080.jpg",
+            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_29fb1ec7455ef721b1a40d493e728f15f8e64900.1920x1080.jpg",
         ],
         "invite_code": "PLGames",
         "connection_info": {
