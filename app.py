@@ -85,12 +85,24 @@ PROJECTS = [
         },
     },
     {
-        "id": "coming_soon",
-        "name": "Новый проект",
-        "full_name": "Скоро...",
-        "subtitle": "В разработке",
-        "type": "Coming Soon",
-        "description": "Новый игровой проект PLGames. Следите за новостями!",
+        "id": "windrose",
+        "name": "Windrose",
+        "icon_url": "",
+        "full_name": "Вольная Гавань",
+        "subtitle": "Кооп-пиратская RPG",
+        "type": "Windrose Server",
+        "description": {"ru": "Открытый сервер PLGames. До 10 игроков, регион CIS. Рестарт каждый день в 00:00 МСК.", "en": "PLGames open server. Up to 10 players, CIS region. Daily restart at 00:00 MSK."},
+        "bg_images": [
+            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/header.jpg",
+            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/ss_1.jpg",
+            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2372710/ss_2.jpg",
+        ],
+        "invite_code": "PLGames",
+        "connection_info": {
+            "type": "invite_code",
+            "code": "PLGames",
+            "instructions": "Play → Connect to Server → ввести код",
+        },
         "realmlist": "", "exe": "", "realmlist_paths": [],
         "news_url": "", "status_url": "",
         "hd_patches": {}, "graphic_settings": {},
@@ -637,7 +649,14 @@ class Api:
             "has_exe": bool(p.get("exe")),
             "icon_url": p.get("icon_url", ""),
             "bg_images": p.get("bg_images", []),
+            "connection_info": p.get("connection_info"),
         } for p in self.projects])
+
+    def get_connection_info(self, pid):
+        proj = next((p for p in self.projects if p["id"] == pid), None)
+        if not proj:
+            return json.dumps(None)
+        return json.dumps(proj.get("connection_info"))
 
     def refresh_manifest(self):
         """Re-fetch manifest from server (called from JS to refresh)."""
@@ -753,7 +772,12 @@ class Api:
                     return json.dumps({"news": news})
             except Exception:
                 pass
-        # Fallback
+        # Fallback per project
+        if pid == "windrose":
+            return json.dumps({"news": [
+                {"tag": "Анонс", "title": "PLGames | Вольная Гавань", "text": "Открытый сервер Windrose. До 10 игроков, регион CIS. Рестарт 00:00 МСК.", "date": "2026-04-23"},
+                {"tag": "Событие", "title": "Как подключиться", "text": "Play → Connect to Server → код: PLGames", "date": "2026-04-23"},
+            ]})
         return json.dumps({"news": [
             {"tag": "Анонс", "title": "Realm Chronos", "text": "THE FROZEN THRONE AWAITS", "date": "2026-03-07"},
         ]})
@@ -1723,6 +1747,12 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 }
 .update-topbar button:hover{background:var(--accent);color:#fff}
 
+/* Connection panel */
+.connection-panel{flex:1;display:flex;align-items:center;gap:12px}
+.copy-code-btn{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--text-dim);transition:all .2s}
+.copy-code-btn:hover{background:rgba(252,163,17,0.15);color:var(--accent);border-color:var(--accent)}
+.copy-code-btn.copied{background:rgba(74,222,128,0.15);color:var(--green);border-color:var(--green)}
+
 /* Animations */
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .fade-in{animation:fadeIn .3s ease}
@@ -1734,7 +1764,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 <div class="topbar">
   <div class="topbar-logo">
     <span style="font-size:22px">&#9876;</span>
-    <span>REALM CHRONOS</span>
+    <span id="topbar-title">PLGAMES</span>
   </div>
   <div class="topbar-nav pywebview-no-drag">
     <button class="topbar-nav-btn active" data-page="games" onclick="showPage('games')">ИГРАТЬ</button>
@@ -1844,6 +1874,19 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
           <button class="seed-toggle" id="seed-toggle"></button>
           <span class="seed-label">Раздача</span>
           <span class="seed-info" id="seed-info"></span>
+        </div>
+        <!-- Connection panel for invite-code games (Windrose etc.) -->
+        <div id="connection-panel" class="connection-panel" style="display:none">
+          <div style="display:flex;flex-direction:column;gap:2px;flex:1">
+            <div style="font-size:11px;color:var(--text-dim)">Код приглашения</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="conn-code" style="font-size:20px;font-weight:700;color:var(--accent);letter-spacing:1px"></span>
+              <button class="copy-code-btn" onclick="copyInviteCode()" title="Копировать код">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              </button>
+            </div>
+            <div id="conn-instructions" style="font-size:10px;color:var(--text-dim);margin-top:2px"></div>
+          </div>
         </div>
         <button class="btn-play" id="btn-play" onclick="launchGame()">ИГРАТЬ</button>
         <button class="btn-install" id="btn-install" style="display:none" onclick="startInstall()">УСТАНОВИТЬ</button>
@@ -2112,15 +2155,30 @@ async function loadGameView() {
   const descText = typeof p.description === 'object' ? (p.description.ru || p.description.en || '') : (p.description || '');
   document.getElementById('hero-text').textContent = descText;
   document.getElementById('server-realm').textContent = p.name;
+  document.getElementById('topbar-title').textContent = p.full_name.toUpperCase();
 
   const btn = document.getElementById('btn-play');
   const btnInstall = document.getElementById('btn-install');
   const seedWrap = document.getElementById('seed-wrap');
   const dlBar = document.getElementById('download-bar');
+  const connPanel = document.getElementById('connection-panel');
   btnInstall.style.display = 'none';
   seedWrap.classList.remove('visible');
   dlBar.className = 'download-bar';
-  if (!p.has_exe) {
+
+  // Hide connection panel by default
+  if (connPanel) connPanel.style.display = 'none';
+
+  if (p.connection_info && p.connection_info.type === 'invite_code') {
+    // Windrose-style: show invite code instead of PLAY button
+    btn.style.display = 'none';
+    document.getElementById('path-section').style.display = 'none';
+    if (connPanel) {
+      connPanel.style.display = 'flex';
+      document.getElementById('conn-code').textContent = p.connection_info.code;
+      document.getElementById('conn-instructions').textContent = p.connection_info.instructions;
+    }
+  } else if (!p.has_exe) {
     btn.className = 'btn-play coming';
     btn.textContent = 'СКОРО';
     btn.disabled = true;
@@ -2168,6 +2226,16 @@ async function launchGame() {
   msg.textContent = res.msg;
   msg.style.color = res.ok ? 'var(--green)' : 'var(--red)';
   btn.disabled = false;
+}
+
+function copyInviteCode() {
+  const code = document.getElementById('conn-code').textContent;
+  navigator.clipboard.writeText(code).then(() => {
+    const btn = document.querySelector('.copy-code-btn');
+    btn.classList.add('copied');
+    btn.title = 'Скопировано!';
+    setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать код'; }, 1500);
+  });
 }
 
 async function checkStatus() {
