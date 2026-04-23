@@ -23,10 +23,17 @@ jobs:
 
       - name: Build exe
         run: |
+          $webviewPath = python -c "import webview; import os; print(os.path.dirname(webview.__file__))"
           pyinstaller --noconsole --onefile --name "PLGamesLauncher" `
             --hidden-import "webview" `
             --hidden-import "clr" `
+            --hidden-import "clr_loader" `
+            --hidden-import "pythonnet" `
             --hidden-import "requests" `
+            --hidden-import "urllib3" `
+            --hidden-import "certifi" `
+            --collect-all "webview" `
+            --collect-all "clr_loader" `
             --clean `
             app.py
 
