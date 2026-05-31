@@ -1,6 +1,14 @@
 {
   "_description": "GET /api/launcher/manifest — единый манифест для лаунчера",
   "_note": "Лаунчер загружает при старте. Если недоступен — использует локальный фоллбэк.",
+  "_live_news": {
+    "endpoint": "GET /api/launcher/news (per-project news_url)",
+    "format": "Массив новостей: [{tag, title, text, image, link, date}]",
+    "image": "Может быть относительным ('/bg/news/x.jpg') — лаунчер сам резолвит к https://<host>/...",
+    "date": "ISO ('2026-05-29T21:13:04.000Z') или 'YYYY-MM-DD' — лаунчер нормализует к дате",
+    "link": "Необязательная ссылка; в превью лаунчера показывается кнопка 'Открыть на сайте'",
+    "click": "Клик по новости открывает превью в лаунчере (полный text + image)"
+  },
 
   "projects": [
     {
@@ -14,16 +22,16 @@
         "https://example.com/bg1.jpg",
         "https://example.com/bg2.jpg"
       ],
-      "realmlist": "set realmlist lkds-room.online",
+      "realmlist": "set realmlist plgames-wow.ru",
       "exe": "wow.exe",
       "realmlist_paths": ["Data/ruRU/realmlist.wtf", "Data/enUS/realmlist.wtf", "realmlist.wtf"],
-      "status_url": "https://lkds-room.online/api/status",
-      "news_url": "https://lkds-room.online/api/content/phases",
-      "sso_start_url": "https://lkds-room.online/api/auth/sso/start",
-      "sso_poll_url": "https://lkds-room.online/api/auth/sso/poll",
-      "credentials_url": "https://lkds-room.online/api/auth/credentials",
-      "reset_password_url": "https://lkds-room.online/api/auth/reset-password",
-      "profile_url": "https://lkds-room.online/api/auth/profile",
+      "status_url": "https://plgames-wow.ru/api/status",
+      "news_url": "https://plgames-wow.ru/api/content/phases",
+      "sso_start_url": "https://plgames-wow.ru/api/auth/sso/start",
+      "sso_poll_url": "https://plgames-wow.ru/api/auth/sso/poll",
+      "credentials_url": "https://plgames-wow.ru/api/auth/credentials",
+      "reset_password_url": "https://plgames-wow.ru/api/auth/reset-password",
+      "profile_url": "https://plgames-wow.ru/api/auth/profile",
 
       "banners": [
         {"image": "https://example.com/banner1.jpg", "title": "Phase 2 скоро!", "link": "https://example.com"},

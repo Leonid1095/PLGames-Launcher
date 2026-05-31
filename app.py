@@ -13,6 +13,8 @@ import uuid
 import threading
 import webbrowser
 import time
+import hashlib
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -188,6 +190,9 @@ def load_settings():
                 defaults.update(json.load(f))
         except Exception:
             pass
+    # Migrate away any plaintext password persisted by older versions.
+    if isinstance(defaults.get("auth"), dict):
+        defaults["auth"].pop("password", None)
     return defaults
 
 def save_settings(s):
@@ -198,13 +203,81 @@ def save_settings(s):
         pass
 
 # ---------------------------------------------------------------------------
+# NEWS / MEDIA HELPERS (multi-project)
+# ---------------------------------------------------------------------------
+
+def _project_base(proj):
+    """Derive scheme://host for a project from one of its URLs, so relative
+    media paths (e.g. '/bg/news/x.jpg') can be resolved to absolute URLs.
+    Each project may live on its own host — keeps the launcher multi-project."""
+    for key in ("news_url", "news_feed_url", "status_url", "profile_url",
+                "sso_start_url", "credentials_url"):
+        u = proj.get(key) or ""
+        if u.startswith("http"):
+            pr = urlparse(u)
+            if pr.scheme and pr.netloc:
+                return f"{pr.scheme}://{pr.netloc}"
+    return API_BASE
+
+def _resolve_media(base, url):
+    """Turn a possibly-relative media URL into an absolute one."""
+    if not url:
+        return ""
+    url = str(url)
+    if url.startswith(("http://", "https://", "data:")):
+        return url
+    base = (base or API_BASE).rstrip("/")
+    return base + (url if url.startswith("/") else "/" + url)
+
+def _fmt_date(d):
+    """Normalize an ISO timestamp ('2026-05-29T21:13:04.000Z') to YYYY-MM-DD."""
+    if not d:
+        return ""
+    d = str(d)
+    return d[:10] if "T" in d else d
+
+def _shape_news_items(items, base):
+    """Normalize raw news items (from /api/launcher/news, manifest, etc.) into
+    the launcher's news shape: resolves relative images, formats dates, and
+    carries the full body text + optional link for the in-app preview."""
+    out = []
+    for i, it in enumerate(items or []):
+        if not isinstance(it, dict):
+            continue
+        out.append({
+            "id": i,
+            "tag": it.get("tag", "Новость"),
+            "title": it.get("title") or it.get("title_ru") or "",
+            "text": it.get("text") or it.get("text_ru") or "",
+            "date": _fmt_date(it.get("date") or it.get("created_at")),
+            "image": _resolve_media(base, it.get("image") or it.get("image_url") or ""),
+            "link": it.get("link") or "",
+        })
+    return out
+
+# ---------------------------------------------------------------------------
 # GAME UTILS
 # ---------------------------------------------------------------------------
 
+def _safe_join(base, rel):
+    """Join rel onto base, refusing absolute paths or ones that escape base.
+    Defends against server-supplied realmlist_paths like '..\\..\\' or 'C:/Windows/...'."""
+    if not rel:
+        return None
+    full = os.path.abspath(os.path.normpath(os.path.join(base, rel)))
+    base_abs = os.path.abspath(os.path.normpath(base))
+    try:
+        if os.path.commonpath([base_abs, full]) != base_abs:
+            return None
+    except ValueError:
+        # Different drives on Windows
+        return None
+    return full
+
 def set_realmlist(gp, val, paths):
     for rel in paths:
-        full = os.path.join(gp, rel)
-        if os.path.exists(full):
+        full = _safe_join(gp, rel)
+        if full and os.path.exists(full):
             try:
                 with open(full, "w", encoding="utf-8") as f:
                     f.write(val + "\n")
@@ -212,7 +285,9 @@ def set_realmlist(gp, val, paths):
             except Exception:
                 pass
     for rel in paths:
-        full = os.path.join(gp, rel)
+        full = _safe_join(gp, rel)
+        if not full:
+            continue
         d = os.path.dirname(full)
         if os.path.isdir(d):
             try:
@@ -307,6 +382,7 @@ class TorrentManager:
         self._error = ""
         self._progress_file = ""
         self._torrent_source = ""
+        self._last_status = {"state": "idle"}
 
     def _aria2c_path(self):
         launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
@@ -493,6 +569,7 @@ class SeedManager:
         self._active = False
         self._upload_speed = 0
         self._peers = 0
+        self._last_error = ""
 
     def _aria2c_path(self):
         # PyInstaller bundles aria2c into _MEIPASS temp dir
@@ -701,6 +778,11 @@ class Api:
         if not proj or not proj.get("exe"):
             return json.dumps({"ok": False, "msg": "Нет исполняемого файла"})
 
+        # The exe name comes from the (server-driven) manifest — it must be a
+        # bare filename inside the game folder, never a path that escapes it.
+        if os.path.basename(proj["exe"]) != proj["exe"]:
+            return json.dumps({"ok": False, "msg": "Недопустимое имя исполняемого файла"})
+
         gp = self.settings.get("game_paths", {}).get(pid, "")
         if not gp or not os.path.isdir(gp):
             return json.dumps({"ok": False, "msg": "Укажите папку с игрой"})
@@ -742,34 +824,50 @@ class Api:
         return json.dumps({"online": None, "players": 0, "accounts": 0})
 
     def get_news(self, pid):
+        """Fetch a project's news. Supports three server shapes, so any of our
+        sites/services can drive the launcher:
+          A) a plain array of items  (the live /api/launcher/news format)
+          B) an object with a "news" array
+          C) a content-roadmap object with "phases" (synthesized into news)
+        Images may be relative — they are resolved against the project's host."""
         proj = next((p for p in self.projects if p["id"] == pid), None)
         if proj and proj.get("news_url"):
+            base = _project_base(proj)
             try:
                 import requests
                 r = requests.get(proj["news_url"], timeout=5)
                 if r.status_code == 200:
                     data = r.json()
-                    # Convert phases to news-like items
-                    news = []
-                    news.append({
-                        "tag": "Анонс",
-                        "title": f"Realm Chronos — День {data.get('server_day', '?')}",
-                        "text": f"Фаза {data.get('current_phase', 1)} из {data.get('total_phases', 6)}. Запуск: {data.get('launch_date', '?')}",
-                        "date": data.get("launch_date", ""),
-                    })
-                    for phase in data.get("phases", []):
-                        status = "Открыто" if phase.get("unlocked") else f"Через {phase.get('days_remaining', '?')} дн."
-                        zones = ", ".join(z["name"] if isinstance(z, dict) else str(z) for z in phase.get("zones", [])) or "—"
-                        dungeons = ", ".join(d["name"] if isinstance(d, dict) else str(d) for d in phase.get("dungeons", [])) or "—"
-                        raids = ", ".join(r["name"] if isinstance(r, dict) else str(r) for r in phase.get("raids", [])) or "—"
-                        tag = "Событие" if phase.get("unlocked") else "Обновление"
-                        news.append({
-                            "tag": tag,
-                            "title": f"Фаза {phase.get('phase', '?')} — {status}",
-                            "text": f"Зоны: {zones}. Подземелья: {dungeons}. Рейды: {raids}. Дата: {phase.get('unlock_date', '?')}",
-                            "date": phase.get("unlock_date", ""),
-                        })
-                    return json.dumps({"news": news})
+                    # A) array of news items
+                    if isinstance(data, list):
+                        return json.dumps({"news": _shape_news_items(data, base)})
+                    if isinstance(data, dict):
+                        # B) object already carrying a news array
+                        if data.get("news"):
+                            return json.dumps({"news": _shape_news_items(data["news"], base)})
+                        # C) content roadmap (phases) -> synthesize news items
+                        if data.get("phases"):
+                            news = []
+                            proj_label = proj.get("full_name") or proj.get("name") or "Сервер"
+                            news.append({
+                                "tag": "Анонс",
+                                "title": f"{proj_label} — День {data.get('server_day', '?')}",
+                                "text": f"Фаза {data.get('current_phase', 1)} из {data.get('total_phases', 6)}. Запуск: {data.get('launch_date', '?')}",
+                                "date": _fmt_date(data.get("launch_date", "")),
+                            })
+                            for phase in data.get("phases", []):
+                                status = "Открыто" if phase.get("unlocked") else f"Через {phase.get('days_remaining', '?')} дн."
+                                zones = ", ".join(z["name"] if isinstance(z, dict) else str(z) for z in phase.get("zones", [])) or "—"
+                                dungeons = ", ".join(d["name"] if isinstance(d, dict) else str(d) for d in phase.get("dungeons", [])) or "—"
+                                raids = ", ".join(r["name"] if isinstance(r, dict) else str(r) for r in phase.get("raids", [])) or "—"
+                                tag = "Событие" if phase.get("unlocked") else "Обновление"
+                                news.append({
+                                    "tag": tag,
+                                    "title": f"Фаза {phase.get('phase', '?')} — {status}",
+                                    "text": f"Зоны: {zones}. Подземелья: {dungeons}. Рейды: {raids}. Дата: {phase.get('unlock_date', '?')}",
+                                    "date": _fmt_date(phase.get("unlock_date", "")),
+                                })
+                            return json.dumps({"news": news})
             except Exception:
                 pass
         # Fallback per project
@@ -936,14 +1034,15 @@ class Api:
                 data = r.json()
                 if data.get("status") == "completed" and data.get("success"):
                     # Save auth — token field per final spec
+                    # NB: the one-time password (data["password"]) is intentionally
+                    # NOT persisted — it is returned below for a single on-screen
+                    # display only, to avoid storing a plaintext credential at rest.
                     auth = {
                         "username": data.get("username", ""),
                         "account_id": data.get("account_id"),
                         "token": data.get("token", ""),
                         "first_name": data.get("first_name", ""),
                     }
-                    if data.get("is_new") and data.get("password"):
-                        auth["password"] = data["password"]
                     self.settings["auth"] = auth
                     save_settings(self.settings)
                     self._sso_session_id = None
@@ -1016,6 +1115,18 @@ class Api:
             return json.dumps({"ok": False, "msg": str(e)})
         return json.dumps({"ok": False, "msg": "Ошибка сброса пароля"})
 
+    def open_external(self, url):
+        """Open a validated http(s) link (news 'link', banner link) in the
+        system browser. Rejects any other scheme."""
+        try:
+            u = str(url or "")
+            if u.startswith(("http://", "https://")):
+                webbrowser.open(u)
+                return json.dumps({"ok": True})
+        except Exception:
+            pass
+        return json.dumps({"ok": False})
+
     def get_version(self):
         return LAUNCHER_VERSION
 
@@ -1025,12 +1136,19 @@ class Api:
 
         def _ver_tuple(v):
             try:
-                return tuple(int(x) for x in v.split("."))
+                parts = [int(x) for x in str(v).split(".")]
             except Exception:
-                return (0,)
+                return (0, 0, 0)
+            while len(parts) < 3:
+                parts.append(0)  # normalize so "0.3" == "0.3.0"
+            return tuple(parts)
 
         def _is_newer(remote, current):
             return _ver_tuple(remote) > _ver_tuple(current)
+
+        # Expected hash for the next downloaded update (set if the server provides
+        # one). Reset on every check so a stale value can't be reused.
+        self._update_sha256 = ""
 
         # --- Try our own server first (avoids GitHub DNS issues) ---
         try:
@@ -1039,6 +1157,7 @@ class Api:
                 data = r.json()
                 remote_ver = str(data.get("version", "")).lstrip("v")
                 if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
+                    self._update_sha256 = str(data.get("sha256", "")).lower().strip()
                     return json.dumps({
                         "has_update": True,
                         "current": LAUNCHER_VERSION,
@@ -1081,35 +1200,138 @@ class Api:
 
         return json.dumps({"has_update": False, "current": LAUNCHER_VERSION})
 
-    def download_update(self, url):
-        """Download new .exe and prepare restart."""
-        if not url:
-            return json.dumps({"ok": False, "msg": "Нет ссылки"})
+    def _update_path(self):
+        """Where the downloaded update .exe is written (next to the current one)."""
+        if getattr(sys, 'frozen', False):
+            return sys.executable + ".update"
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "PLGamesLauncher.exe.update")
+
+    def _github_latest_exe_url(self):
+        """Resolve the .exe asset URL of the latest GitHub release — used only as
+        a fallback source for the binary if the primary (server) URL fails.
+        Returns '' on any failure (e.g. GitHub blocked / rate-limited)."""
         try:
             import requests
-            from requests.adapters import HTTPAdapter
-            session = requests.Session()
-            # Use longer timeout — file is ~70MB
-            r = session.get(url, stream=True, timeout=600, allow_redirects=True)
-            if r.status_code == 200:
-                # Save next to current exe
-                if getattr(sys, 'frozen', False):
-                    current_exe = sys.executable
-                    update_path = current_exe + ".update"
-                else:
-                    update_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PLGamesLauncher.exe.update")
+            r = requests.get(GITHUB_RELEASE_URL, timeout=8,
+                             headers={"Accept": "application/vnd.github.v3+json"})
+            if r.status_code != 200:
+                return ""
+            assets = r.json().get("assets", [])
+            for asset in assets:  # prefer an installer/setup .exe
+                n = asset.get("name", "").lower()
+                if n.endswith(".exe") and "setup" in n:
+                    return asset.get("browser_download_url", "")
+            for asset in assets:  # else any .exe
+                if asset.get("name", "").lower().endswith(".exe"):
+                    return asset.get("browser_download_url", "")
+        except Exception:
+            pass
+        return ""
 
-                total = int(r.headers.get('content-length', 0))
-                downloaded = 0
-                with open(update_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=8192):
+    def _download_one(self, url):
+        """Download a single candidate URL to the update path.
+        Returns (ok: bool, path: str, error: str)."""
+        try:
+            import requests
+            session = requests.Session()
+            # Long timeout — the file can be ~70MB
+            r = session.get(url, stream=True, timeout=600, allow_redirects=True)
+            if r.status_code != 200:
+                return False, "", f"HTTP {r.status_code}"
+            # A blocked/redirected page returns HTML, not a binary — treat as failure.
+            if "text/html" in r.headers.get("content-type", "").lower():
+                return False, "", "получен HTML вместо .exe (блокировка/404)"
+            update_path = self._update_path()
+            downloaded = 0
+            with open(update_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-
-                return json.dumps({"ok": True, "path": update_path})
+            if downloaded < 1_000_000:
+                try:
+                    os.remove(update_path)
+                except Exception:
+                    pass
+                return False, "", f"файл слишком мал ({downloaded} б)"
+            return True, update_path, ""
         except Exception as e:
-            return json.dumps({"ok": False, "msg": str(e)})
-        return json.dumps({"ok": False, "msg": "Ошибка загрузки"})
+            return False, "", str(e)
+
+    def download_update(self, url):
+        """Download the new .exe. Tries the (server-provided) url FIRST, then
+        falls back to the latest GitHub Releases .exe if the primary source
+        fails — covers a stale/blocked server URL or a blocked GitHub mirror.
+        GitHub is contacted only after the primary download fails."""
+        candidates = [url] if url else []
+
+        last_err = ""
+        github_queued = False
+
+        def _queue_github():
+            gh = self._github_latest_exe_url()
+            if gh and gh not in candidates:
+                candidates.append(gh)
+
+        if not candidates:
+            _queue_github()
+            github_queued = True
+            if not candidates:
+                return json.dumps({"ok": False, "msg": "Нет ссылки для загрузки"})
+
+        idx = 0
+        while idx < len(candidates):
+            cand = candidates[idx]
+            idx += 1
+            ok, path, err = self._download_one(cand)
+            if ok:
+                return json.dumps({"ok": True, "path": path, "source": cand})
+            last_err = err
+            # On first failure, queue the GitHub fallback (once).
+            if not github_queued:
+                github_queued = True
+                _queue_github()
+
+        return json.dumps({"ok": False, "msg": f"Ошибка загрузки: {last_err}"})
+
+    def _verify_update_file(self, path):
+        """Defence-in-depth checks before swapping in a downloaded update.
+        Returns (ok: bool, msg: str). NOTE: full protection against a malicious
+        update requires the released .exe to be Authenticode-signed in CI; until
+        then these checks guard against corruption, a server-advertised-hash
+        mismatch, and tampered/revoked signed binaries."""
+        # 1) SHA256 against the hash the server advertised (if any).
+        expected = getattr(self, "_update_sha256", "")
+        if expected:
+            try:
+                h = hashlib.sha256()
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+                actual = h.hexdigest().lower()
+            except Exception as e:
+                return False, f"Не удалось проверить контрольную сумму: {e}"
+            if actual != expected:
+                return False, "Контрольная сумма обновления не совпадает — файл отклонён"
+
+        # 2) On a frozen Windows build, reject a binary that carries an INVALID
+        #    Authenticode signature (tampered/revoked). Unsigned is tolerated
+        #    until release signing is in place.
+        if getattr(sys, "frozen", False) and sys.platform.startswith("win"):
+            try:
+                ps = f"(Get-AuthenticodeSignature -LiteralPath '{path}').Status.ToString()"
+                out = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps],
+                    capture_output=True, text=True, timeout=20,
+                    creationflags=0x08000000,
+                )
+                status = (out.stdout or "").strip()
+                if status and status not in ("Valid", "NotSigned"):
+                    return False, f"Подпись обновления недействительна ({status})"
+            except Exception:
+                pass  # signature tooling unavailable — rely on hash/size checks
+
+        return True, ""
 
     def apply_update(self, update_path):
         """Replace current exe with update and restart."""
@@ -1119,6 +1341,13 @@ class Api:
             fsize = os.path.getsize(update_path)
             if fsize < 1_000_000:
                 return json.dumps({"ok": False, "msg": f"Файл обновления слишком мал ({fsize} байт), возможно ошибка загрузки"})
+            ok, vmsg = self._verify_update_file(update_path)
+            if not ok:
+                try:
+                    os.remove(update_path)
+                except Exception:
+                    pass
+                return json.dumps({"ok": False, "msg": vmsg})
             if getattr(sys, 'frozen', False):
                 current_exe = sys.executable
                 backup = current_exe + ".bak"
@@ -1625,7 +1854,8 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .tag-event{background:rgba(0,174,255,0.15);color:var(--accent)}
 .news-date{font-size:10px;color:var(--text-dim);margin-left:auto}
 .news-card-full h3{font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px}
-.news-card-full p{font-size:12px;color:var(--text-sec);line-height:1.6}
+.news-card-full p{font-size:12px;color:var(--text-sec);line-height:1.6;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 
 /* Settings full page */
 .settings-full{padding:24px 28px}
@@ -1752,6 +1982,41 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .copy-code-btn{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--text-dim);transition:all .2s}
 .copy-code-btn:hover{background:rgba(252,163,17,0.15);color:var(--accent);border-color:var(--accent)}
 .copy-code-btn.copied{background:rgba(74,222,128,0.15);color:var(--green);border-color:var(--green)}
+
+/* ===== NEWS PREVIEW MODAL ===== */
+.news-modal-overlay{
+  display:none;position:fixed;inset:0;z-index:500;
+  background:rgba(8,9,12,0.78);align-items:center;justify-content:center;padding:32px;
+  animation:fadeIn .2s ease;
+}
+.news-modal-overlay.show{display:flex}
+.news-modal{
+  position:relative;background:var(--bg-dark);border:1px solid var(--border-l);
+  border-radius:14px;width:min(680px,92vw);max-height:86vh;overflow:hidden;
+  display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);
+}
+.news-modal-img{
+  width:100%;height:220px;background-size:cover;background-position:center;
+  flex-shrink:0;background-color:rgba(255,255,255,0.03);
+}
+.news-modal-body{padding:22px 26px 26px;overflow-y:auto}
+.news-modal-body::-webkit-scrollbar{width:5px}
+.news-modal-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+.news-modal-top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.news-modal-title{font-size:19px;font-weight:800;color:#fff;line-height:1.25;margin-bottom:14px;font-family:'Cinzel',serif}
+.news-modal-text{font-size:13px;color:var(--text-sec);line-height:1.7;white-space:pre-wrap;user-select:text}
+.news-modal-actions{display:flex;gap:10px;margin-top:20px}
+.news-modal-link{
+  padding:9px 20px;border-radius:6px;border:none;cursor:pointer;font-family:inherit;
+  background:var(--blue-btn);color:#fff;font-size:12px;font-weight:700;transition:background .15s;
+}
+.news-modal-link:hover{background:var(--blue-btn-h)}
+.news-modal-close{
+  position:absolute;top:14px;right:16px;width:32px;height:32px;border-radius:50%;
+  border:none;background:rgba(0,0,0,0.45);color:#fff;cursor:pointer;font-size:15px;z-index:2;
+  display:flex;align-items:center;justify-content:center;transition:background .15s;
+}
+.news-modal-close:hover{background:rgba(0,0,0,0.75)}
 
 /* Animations */
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -2004,6 +2269,25 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 
 </div>
 
+<!-- NEWS PREVIEW MODAL -->
+<div class="news-modal-overlay" id="news-modal-overlay" onclick="if(event.target===this)closeNewsPreview()">
+  <div class="news-modal">
+    <button class="news-modal-close" onclick="closeNewsPreview()">&#x2715;</button>
+    <div class="news-modal-img" id="news-modal-img" style="display:none"></div>
+    <div class="news-modal-body">
+      <div class="news-modal-top">
+        <span class="news-tag" id="news-modal-tag"></span>
+        <span class="news-date" id="news-modal-date"></span>
+      </div>
+      <div class="news-modal-title" id="news-modal-title"></div>
+      <div class="news-modal-text" id="news-modal-text"></div>
+      <div class="news-modal-actions" id="news-modal-actions" style="display:none">
+        <button class="news-modal-link" onclick="openNewsLink()">Открыть на сайте</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 let projects = [];
 let activeProject = null;
@@ -2013,7 +2297,15 @@ let heroTimer = null;
 
 const RESOLUTIONS = %RESOLUTIONS%;
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
-const TAG_CLASSES = {'Анонс':'tag-announce','Обновление':'tag-update','Исправление':'tag-fix','Событие':'tag-event'};
+// Sanitize a server-supplied image URL before putting it inside CSS url(...) /
+// an HTML attribute. Rejects non-http(s)/data:image schemes and encodes chars
+// that could break out of the url() or the attribute (XSS hardening).
+function safeUrl(u){
+  u = String(u == null ? '' : u);
+  if (!/^(https?:\/\/|data:image\/)/i.test(u)) return '';
+  return u.replace(/[)"'(<>\\\s]/g, encodeURIComponent);
+}
+const TAG_CLASSES = {'Анонс':'tag-announce','Обновление':'tag-update','Исправление':'tag-fix','Фикс':'tag-fix','Хотфикс':'tag-fix','Событие':'tag-event','Новость':'tag-announce'};
 
 const DEFAULT_HERO_IMAGES = [
   'https://wow.zamimg.com/uploads/screenshots/normal/522757-the-lich-king.jpg',
@@ -2022,6 +2314,41 @@ const DEFAULT_HERO_IMAGES = [
 ];
 let HERO_IMAGES = [...DEFAULT_HERO_IMAGES];
 let cachedNewsFeed = null;
+let currentNews = [];
+let currentNewsLink = '';
+
+// ==================== NEWS PREVIEW ====================
+
+function openNewsPreview(idx) {
+  const item = currentNews[idx];
+  if (!item) return;
+  const img = document.getElementById('news-modal-img');
+  if (item.image) {
+    img.style.display = '';
+    img.style.backgroundImage = `url('${safeUrl(item.image)}')`;
+  } else {
+    img.style.display = 'none';
+  }
+  const tag = document.getElementById('news-modal-tag');
+  tag.textContent = item.tag || 'Новость';
+  tag.className = 'news-tag ' + (TAG_CLASSES[item.tag] || 'tag-announce');
+  document.getElementById('news-modal-date').textContent = item.date || '';
+  document.getElementById('news-modal-title').textContent = item.title || '';
+  document.getElementById('news-modal-text').textContent = item.text || '';
+  currentNewsLink = item.link || '';
+  document.getElementById('news-modal-actions').style.display = currentNewsLink ? '' : 'none';
+  document.getElementById('news-modal-overlay').classList.add('show');
+}
+
+function closeNewsPreview() {
+  document.getElementById('news-modal-overlay').classList.remove('show');
+}
+
+function openNewsLink() {
+  if (currentNewsLink) pywebview.api.open_external(currentNewsLink);
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNewsPreview(); });
 
 async function init() {
   projects = JSON.parse(await pywebview.api.get_projects());
@@ -2114,7 +2441,7 @@ function startHeroSlider() {
     indicators.appendChild(ind);
   });
 
-  bg.style.backgroundImage = `url(${HERO_IMAGES[0]})`;
+  bg.style.backgroundImage = `url('${safeUrl(HERO_IMAGES[0])}')`;
   heroSlideIndex = 0;
 
   if (heroTimer) clearInterval(heroTimer);
@@ -2128,7 +2455,7 @@ function goToSlide(i) {
   const bg = document.getElementById('hero-bg');
   bg.style.opacity = '0';
   setTimeout(() => {
-    bg.style.backgroundImage = `url(${HERO_IMAGES[i]})`;
+    bg.style.backgroundImage = `url('${safeUrl(HERO_IMAGES[i])}')`;
     bg.style.opacity = '1';
   }, 300);
 
@@ -2272,10 +2599,11 @@ async function loadNewsRow() {
   row.innerHTML = '';
   try {
     const data = JSON.parse(await pywebview.api.get_news(activeProject.id));
-    const items = (data.news || []).slice(0, 3);
+    currentNews = data.news || [];
+    const items = currentNews.slice(0, 3);
 
-    // If news have images, use them for hero slider too
-    const newsImages = items.map(n => n.image).filter(Boolean);
+    // If news carry images, use them for the hero slider too
+    const newsImages = currentNews.map(n => n.image).filter(Boolean);
     if (newsImages.length) {
       HERO_IMAGES = newsImages;
       startHeroSlider();
@@ -2284,8 +2612,8 @@ async function loadNewsRow() {
     items.forEach((item, i) => {
       const cardImg = item.image || HERO_IMAGES[i % HERO_IMAGES.length] || '';
       row.innerHTML += `
-        <div class="news-card-mini" onclick="showPage('news')">
-          <div class="news-card-img" style="background-image:url(${cardImg})"></div>
+        <div class="news-card-mini" onclick="openNewsPreview(${i})">
+          <div class="news-card-img" style="background-image:url('${safeUrl(cardImg)}')"></div>
           <div class="news-card-body">
             <div class="news-card-tag">${esc(item.tag || 'Новость')}</div>
             <div class="news-card-title">${esc(item.title)}</div>
@@ -2301,12 +2629,13 @@ async function loadNews() {
   try {
     const data = JSON.parse(await pywebview.api.get_news(activeProject.id));
     const items = data.news || [];
+    currentNews = items;
     grid.innerHTML = '';
-    items.forEach(item => {
+    items.forEach((item, i) => {
       const tagClass = TAG_CLASSES[item.tag] || 'tag-announce';
-      const imgHtml = item.image ? `<div class="news-card-full-img" style="background-image:url(${item.image})"></div>` : '';
+      const imgHtml = item.image ? `<div class="news-card-full-img" style="background-image:url('${safeUrl(item.image)}')"></div>` : '';
       grid.innerHTML += `
-        <div class="news-card-full">
+        <div class="news-card-full" style="cursor:pointer" onclick="openNewsPreview(${i})">
           ${imgHtml}
           <div class="news-top">
             <span class="news-tag ${tagClass}">${esc(item.tag)}</span>
