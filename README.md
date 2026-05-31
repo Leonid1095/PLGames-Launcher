@@ -1,7 +1,7 @@
 # ⚔ PLGames Launcher
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.0-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.3.1-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10+-yellow?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square&logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
@@ -37,19 +37,12 @@
 
 ```
 PLGames Launcher
-├── app.py              # Основное приложение (pywebview + inline HTML/CSS/JS)
-├── config.py           # Конфигурация HD патчей
-├── launcher.py         # Legacy tkinter launcher
+├── app.py              # Всё приложение: pywebview-бэкенд + inline HTML/CSS/JS
 ├── build.bat           # Сборка .exe (PyInstaller)
+├── installer.nsi       # NSIS-инсталлятор
 ├── requirements.txt    # Python-зависимости
-├── core/
-│   ├── game_launcher.py    # Запуск игры
-│   ├── hd_manager.py       # Менеджер HD патчей
-│   └── updater.py          # Система обновлений
-└── pages/
-    ├── game_page.py        # Страница игры (legacy)
-    ├── news_page.py        # Страница новостей (legacy)
-    └── settings_page.py    # Страница настроек (legacy)
+├── aria2c.exe          # Загрузчик торрентов (сторонний бинарь)
+└── .github/workflows/  # CI: сборка и публикация релиза по тегу v*
 ```
 
 ## Как работает
@@ -128,8 +121,8 @@ build.bat
 
 Для релиза:
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 # Загрузить .exe в GitHub Release
 ```
 
