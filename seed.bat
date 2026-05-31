@@ -4,7 +4,7 @@ REM PLGames Seeder — раздача WoW 3.3.5a через aria2c
 REM Запустить в папке где лежит скачанный клиент
 REM ============================================
 
-set TORRENT=%~dp0WoW 3.3.5a.torrent
+set TORRENT=%~dp0PLGames_Wow3.3.5.torrent
 set ARIA2C=%~dp0aria2c.exe
 set DATA_DIR=%~dp0..
 

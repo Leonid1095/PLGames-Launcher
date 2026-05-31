@@ -780,7 +780,13 @@ class Api:
 
         # The exe name comes from the (server-driven) manifest — it must be a
         # bare filename inside the game folder, never a path that escapes it.
-        if os.path.basename(proj["exe"]) != proj["exe"]:
+        exe_name = proj["exe"]
+        if os.path.basename(exe_name) != exe_name or "\\" in exe_name or "/" in exe_name:
+            return json.dumps({"ok": False, "msg": "Недопустимое имя исполняемого файла"})
+        # Reject UNC paths, device names, and non-ASCII control chars
+        _RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
+                           "LPT1", "LPT2", "LPT3", "CLOCK$"}
+        if exe_name.upper().split(".")[0] in _RESERVED_NAMES:
             return json.dumps({"ok": False, "msg": "Недопустимое имя исполняемого файла"})
 
         gp = self.settings.get("game_paths", {}).get(pid, "")
@@ -988,15 +994,15 @@ class Api:
                         save_settings(self.settings)
                         return json.dumps({"logged_in": False})
                 except Exception:
-                    # Network error — trust local data
                     pass
-            # Fallback: return local data if network failed
+            # Network error — return local data but flag as unverified
             if auth.get("username"):
                 return json.dumps({
                     "logged_in": True,
                     "username": auth["username"],
                     "account_id": auth.get("account_id"),
                     "first_name": auth.get("first_name", ""),
+                    "offline": True,
                 })
         return json.dumps({"logged_in": False})
 
@@ -1012,11 +1018,11 @@ class Api:
                 data = r.json()
                 self._sso_session_id = data.get("sessionId")
                 bot_link = data.get("botLink", "")
-                if bot_link:
+                if bot_link and bot_link.startswith("https://"):
                     webbrowser.open(bot_link)
                 return json.dumps({"ok": True, "sessionId": self._sso_session_id})
-        except Exception as e:
-            return json.dumps({"ok": False, "msg": f"SSO сервис недоступен: {e}"})
+        except Exception:
+            return json.dumps({"ok": False, "msg": "SSO сервис недоступен"})
         return json.dumps({"ok": False, "msg": "Не удалось начать авторизацию"})
 
     def sso_poll(self):
@@ -1069,9 +1075,11 @@ class Api:
             return json.dumps({"ok": False})
         try:
             import requests
-            r = requests.get(proj["credentials_url"], params={
+            r = requests.post(proj["credentials_url"], json={
                 "username": auth["username"],
                 "account_id": auth["account_id"],
+            }, headers={
+                "Authorization": f"Bearer {auth.get('token', '')}",
             }, timeout=5)
             if r.status_code == 200:
                 data = r.json()
@@ -1319,7 +1327,8 @@ class Api:
         #    until release signing is in place.
         if getattr(sys, "frozen", False) and sys.platform.startswith("win"):
             try:
-                ps = f"(Get-AuthenticodeSignature -LiteralPath '{path}').Status.ToString()"
+                escaped_path = str(path).replace("'", "''")
+                ps = f"(Get-AuthenticodeSignature -LiteralPath '{escaped_path}').Status.ToString()"
                 out = subprocess.run(
                     ["powershell", "-NoProfile", "-Command", ps],
                     capture_output=True, text=True, timeout=20,
@@ -1337,7 +1346,7 @@ class Api:
         """Replace current exe with update and restart."""
         try:
             if not os.path.isfile(update_path):
-                return json.dumps({"ok": False, "msg": f"Файл обновления не найден: {update_path}"})
+                return json.dumps({"ok": False, "msg": "Файл обновления не найден"})
             fsize = os.path.getsize(update_path)
             if fsize < 1_000_000:
                 return json.dumps({"ok": False, "msg": f"Файл обновления слишком мал ({fsize} байт), возможно ошибка загрузки"})
@@ -1351,27 +1360,31 @@ class Api:
             if getattr(sys, 'frozen', False):
                 current_exe = sys.executable
                 backup = current_exe + ".bak"
+                # Validate paths contain no batch-breaking characters
+                for p in (current_exe, update_path, backup):
+                    if any(c in p for c in '&|<>^%!'):
+                        return json.dumps({"ok": False, "msg": "Путь содержит недопустимые символы. Переместите лаунчер в папку без спецсимволов."})
                 bat = os.path.join(os.path.dirname(current_exe), "_update.bat")
                 with open(bat, "w", encoding="utf-8") as f:
-                    f.write(f'@echo off\n')
-                    f.write(f'echo Обновление PLGames Launcher...\n')
-                    f.write(f'timeout /t 3 /nobreak >nul\n')
-                    f.write(f'del "{backup}" 2>nul\n')
-                    f.write(f'move /Y "{current_exe}" "{backup}"\n')
-                    f.write(f'if errorlevel 1 (\n')
-                    f.write(f'  echo Ошибка: не удалось переименовать текущий файл\n')
-                    f.write(f'  pause\n')
-                    f.write(f'  exit /b 1\n')
-                    f.write(f')\n')
-                    f.write(f'move /Y "{update_path}" "{current_exe}"\n')
-                    f.write(f'if errorlevel 1 (\n')
-                    f.write(f'  echo Ошибка: не удалось переместить обновление\n')
-                    f.write(f'  move /Y "{backup}" "{current_exe}" 2>nul\n')
-                    f.write(f'  pause\n')
-                    f.write(f'  exit /b 1\n')
-                    f.write(f')\n')
-                    f.write(f'start "" "{current_exe}"\n')
-                    f.write(f'del "%~f0"\n')
+                    f.write('@echo off\r\n')
+                    f.write('echo Обновление PLGames Launcher...\r\n')
+                    f.write('timeout /t 3 /nobreak >nul\r\n')
+                    f.write(f'del "{backup}" 2>nul\r\n')
+                    f.write(f'move /Y "{current_exe}" "{backup}"\r\n')
+                    f.write('if errorlevel 1 (\r\n')
+                    f.write('  echo Ошибка: не удалось переименовать текущий файл\r\n')
+                    f.write('  pause\r\n')
+                    f.write('  exit /b 1\r\n')
+                    f.write(')\r\n')
+                    f.write(f'move /Y "{update_path}" "{current_exe}"\r\n')
+                    f.write('if errorlevel 1 (\r\n')
+                    f.write('  echo Ошибка: не удалось переместить обновление\r\n')
+                    f.write(f'  move /Y "{backup}" "{current_exe}" 2>nul\r\n')
+                    f.write('  pause\r\n')
+                    f.write('  exit /b 1\r\n')
+                    f.write(')\r\n')
+                    f.write(f'start "" "{current_exe}"\r\n')
+                    f.write('del "%~f0"\r\n')
                 _seed_mgr.stop()
                 subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
                 self.window.destroy()
@@ -1379,7 +1392,7 @@ class Api:
             else:
                 return json.dumps({"ok": False, "msg": "Обновление доступно только для .exe версии"})
         except Exception as e:
-            return json.dumps({"ok": False, "msg": str(e)})
+            return json.dumps({"ok": False, "msg": "Ошибка при обновлении"})
 
     # ---- TORRENT DOWNLOAD ----
 
@@ -2297,13 +2310,13 @@ let heroTimer = null;
 
 const RESOLUTIONS = %RESOLUTIONS%;
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
-// Sanitize a server-supplied image URL before putting it inside CSS url(...) /
-// an HTML attribute. Rejects non-http(s)/data:image schemes and encodes chars
-// that could break out of the url() or the attribute (XSS hardening).
+// Sanitize a server-supplied image URL. Only allows https:// and data:image/(png|jpeg|gif|webp).
+// Rejects svg (XSS vector) and encodes chars that could break CSS url() context.
 function safeUrl(u){
   u = String(u == null ? '' : u);
-  if (!/^(https?:\/\/|data:image\/)/i.test(u)) return '';
-  return u.replace(/[)"'(<>\\\s]/g, encodeURIComponent);
+  if (/^https?:\/\//i.test(u)) return u.replace(/[)"'(<>\\\s]/g, encodeURIComponent);
+  if (/^data:image\/(png|jpeg|gif|webp)[;,]/i.test(u)) return u.replace(/[)"'(<>\\\s]/g, encodeURIComponent);
+  return '';
 }
 const TAG_CLASSES = {'Анонс':'tag-announce','Обновление':'tag-update','Исправление':'tag-fix','Фикс':'tag-fix','Хотфикс':'tag-fix','Событие':'tag-event','Новость':'tag-announce'};
 

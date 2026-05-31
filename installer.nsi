@@ -18,7 +18,7 @@ Section "Install"
 
     File "dist\PLGamesLauncher.exe"
     File "dist\aria2c.exe"
-    File "dist\WoW 3.3.5a.torrent"
+    File "dist\PLGames_Wow3.3.5.torrent"
 
     ; Desktop shortcut
     CreateShortCut "$DESKTOP\PLGames Launcher.lnk" "$INSTDIR\PLGamesLauncher.exe"

@@ -47,12 +47,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PLGamesLauncher
-          path: dist/PLGamesLauncher.exe
+          path: |
+            dist/PLGamesLauncher.exe
+            dist/aria2c.exe
+            dist/PLGames_Wow3.3.5.torrent
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/PLGamesLauncher.exe
+          files: |
+            dist/PLGamesLauncher.exe
+            dist/aria2c.exe
+            dist/PLGames_Wow3.3.5.torrent
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

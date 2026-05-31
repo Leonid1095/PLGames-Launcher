@@ -21,10 +21,10 @@ if exist "dist\PLGamesLauncher.exe" (
 
     echo Copying support files...
     if exist "aria2c.exe" copy /Y "aria2c.exe" "dist\aria2c.exe"
-    if exist "WoW 3.3.5a.torrent" copy /Y "WoW 3.3.5a.torrent" "dist\WoW 3.3.5a.torrent"
+    if exist "PLGames_Wow3.3.5.torrent" copy /Y "PLGames_Wow3.3.5.torrent" "dist\PLGames_Wow3.3.5.torrent"
 
     echo Creating portable ZIP...
-    powershell -Command "Compress-Archive -Path 'dist\PLGamesLauncher.exe','dist\aria2c.exe','dist\WoW 3.3.5a.torrent' -DestinationPath 'dist\PLGamesLauncher_Portable.zip' -Force"
+    powershell -Command "Compress-Archive -Path 'dist\PLGamesLauncher.exe','dist\aria2c.exe','dist\PLGames_Wow3.3.5.torrent' -DestinationPath 'dist\PLGamesLauncher_Portable.zip' -Force"
 
     echo Building installer...
     if exist "installer.nsi" (
