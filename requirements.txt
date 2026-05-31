@@ -1,3 +1,4 @@
 pyinstaller
 requests
 pywebview
+pythonnet>=3.0.3
