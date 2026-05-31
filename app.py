@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.3.0"
+LAUNCHER_VERSION = "0.3.1"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
