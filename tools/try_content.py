@@ -23,6 +23,15 @@ import content  # noqa: E402
 from build_content_manifest import SERVER_BASE  # noqa: E402
 
 
+def _say(text):
+    """print, который не падает на консоли без кириллицы (cp1252 в CI)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "ascii"
+        print(text.encode(enc, "replace").decode(enc))
+
+
 class _LocalResponse:
     def __init__(self, path):
         self.status_code = 200
@@ -71,7 +80,7 @@ def apply(game_dir, dist_dir, edition=None, components=None, is_running=None):
     status = content.component_status(manifest, game_dir, state)
     actions = content.plan(manifest, status, state, target)
     for a in actions:
-        print(f"  {a.kind:14} {manifest.component(a.component).name}")
+        _say(f"  {a.kind:14} {manifest.component(a.component).name}")
     return content.Executor(manifest, game_dir, state, session=LocalSession(server_dir),
                             is_running=is_running).run(actions, edition=label)
 
@@ -90,7 +99,7 @@ def main(argv=None):
         state = apply(args.game_dir, args.dist, edition=args.edition, components=comps if not args.edition else None)
     except (content.ApplyError, content.PlanError, content.ManifestError) as e:
         raise SystemExit(f"Ошибка: {e}")
-    print(f"Готово: издание «{state['edition']}», компоненты с файлами: {', '.join(state['components']) or 'нет'}")
+    _say(f"Готово: издание «{state['edition']}», компоненты с файлами: {', '.join(state['components']) or 'нет'}")
 
 
 if __name__ == "__main__":
