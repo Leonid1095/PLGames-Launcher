@@ -16,17 +16,27 @@ import time
 import hashlib
 from urllib.parse import urlparse
 
+import client_install
+import content
+from editions import EditionService
+from gameutils import safe_join as _safe_join, read_config_wtf, write_config_wtf
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.3.4"
+LAUNCHER_VERSION = "0.4.0"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
 GITHUB_REPO = "Leonid1095/PLGames-Launcher"
 GITHUB_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 SETTINGS_FILE = "plgames_settings.json"
+# Манифест графических изданий: сервер → GitHub (резерв) → кэш → встроенный content_default.json.
+CONTENT_MANIFEST_URLS = [
+    f"{API_BASE}/launcher/content/manifest.json",
+    f"https://github.com/{GITHUB_REPO}/releases/download/content-latest/manifest.json",
+]
 
 PROJECTS = [
     {
@@ -55,27 +65,10 @@ PROJECTS = [
         "reset_password_url": f"{API_AUTH}/api/auth/reset-password",
         "profile_url": f"{API_AUTH}/api/auth/profile",
         "news_feed_url": f"{API_BASE}/api/launcher/news",
-        "hd_patches": {
-            "patch-H.MPQ":  {"name": "HD Ловушки охотника", "cat": "weapon", "folder": "Data"},
-            "patch-M.mpq":  {"name": "Серебряная длань", "cat": "weapon", "folder": "Data"},
-            "patch-L.mpq":  {"name": "Закаленный молот рока", "cat": "weapon", "folder": "Data"},
-            "patch-P.MPQ":  {"name": "Артефакт паладина", "cat": "weapon", "folder": "Data"},
-            "patch-K.MPQ":  {"name": "Оружие Логова Ониксии", "cat": "weapon", "folder": "Data"},
-            "patch-T.mpq":  {"name": "Громовая Ярость (Легион)", "cat": "weapon", "folder": "Data"},
-            "patch-X.mpq":  {"name": "Легендарка варлока", "cat": "weapon", "folder": "Data"},
-            "patch-J.mpq":  {"name": "Ултхалеш, жнец мертвого ветра", "cat": "weapon", "folder": "Data"},
-            "patch-O.mpq":  {"name": "Экипировка жреца/друида", "cat": "weapon", "folder": "Data"},
-            "patch-W.MPQ":  {"name": "Доп. модели оружия", "cat": "weapon", "folder": "Data"},
-            "patch-ruRU-4.MPQ": {"name": "HD Текстуры WotLK", "cat": "texture", "folder": "Data/ruRU"},
-            "patch-ruRU-5.MPQ": {"name": "HD Текстуры Classic/TBC", "cat": "texture", "folder": "Data/ruRU"},
-            "patch-ruRU-m.MPQ": {"name": "Карты подземелий Classic", "cat": "texture", "folder": "Data/ruRU"},
-            "patch-ruRU-A.MPQ": {"name": "HD Модели персонажей и NPC", "cat": "model", "folder": "Data/ruRU"},
-            "Patch-ruRU-F.MPQ": {"name": "HD Существа и маунты (1/2)", "cat": "model", "folder": "Data/ruRU"},
-            "Patch-ruRU-G.MPQ": {"name": "HD Существа и маунты (2/2)", "cat": "model", "folder": "Data/ruRU"},
-            "patch-ruRU-O.mpq": {"name": "Новые комплекты брони", "cat": "model", "folder": "Data/ruRU"},
-            "Patch-ruRU-P.mpq": {"name": "HD Анимации способностей", "cat": "fx", "folder": "Data/ruRU"},
-            "Patch-ruRU-V.mpq": {"name": "HD Текстура воды", "cat": "fx", "folder": "Data/ruRU"},
-        },
+        # Архив клиента внутри торрента: после скачивания распаковывается в папку игры.
+        "client_archive": "PLGames_Wow3.3.5.rar",
+        # Графические издания (Классика / Ремастер / Ультра) — см. editions.py.
+        "editions": True,
         "graphic_settings": {
             "gxResolution":       {"label": "Разрешение", "type": "res"},
             "gxWindow":           {"label": "Оконный режим", "type": "bool"},
@@ -107,9 +100,13 @@ PROJECTS = [
         },
         "realmlist": "", "exe": "", "realmlist_paths": [],
         "news_url": "", "status_url": "",
-        "hd_patches": {}, "graphic_settings": {},
+        "graphic_settings": {},
     },
 ]
+
+# pywebview 5.x: FileDialog.*; старые константы *_DIALOG объявлены устаревшими.
+_FOLDER_DIALOG = webview.FileDialog.FOLDER if hasattr(webview, "FileDialog") else webview.FOLDER_DIALOG
+_OPEN_DIALOG = webview.FileDialog.OPEN if hasattr(webview, "FileDialog") else webview.OPEN_DIALOG
 
 RESOLUTIONS = ["800x600","1024x768","1280x720","1280x1024","1366x768","1600x900","1920x1080","2560x1440","3840x2160"]
 
@@ -123,7 +120,8 @@ def fetch_manifest():
                      realmlist, exe, realmlist_paths, status_url, news_feed_url,
                      sso_start_url, sso_poll_url, credentials_url, reset_password_url,
                      profile_url, banners, news
-    Local provides:  hd_patches, graphic_settings (client-side only)
+    Local provides:  graphic_settings, torrent_url/torrent_folder, client_archive,
+                     editions (client-side only)
     """
     try:
         import requests
@@ -164,8 +162,11 @@ def fetch_manifest():
                     "banners": sp.get("banners", []),
                     "news": sp.get("news", []),
                     # Client-only fields (local wins)
-                    "hd_patches": local.get("hd_patches", sp.get("hd_patches", {})),
                     "graphic_settings": local.get("graphic_settings", sp.get("graphic_settings", {})),
+                    "torrent_url": local.get("torrent_url", sp.get("torrent_url", "")),
+                    "torrent_folder": local.get("torrent_folder", sp.get("torrent_folder", "")),
+                    "client_archive": local.get("client_archive", sp.get("client_archive", "")),
+                    "editions": local.get("editions", False),
                 }
                 merged.append(proj)
             return merged
@@ -196,11 +197,48 @@ def load_settings():
     return defaults
 
 def save_settings(s):
+    # Атомарно: сбой посреди записи (или запись из фонового потока) не обнулит файл.
+    path = _settings_path()
     try:
-        with open(_settings_path(), "w", encoding="utf-8") as f:
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
             json.dump(s, f, indent=2, ensure_ascii=False)
+        os.replace(path + ".tmp", path)
     except Exception:
         pass
+
+def _bundled(name):
+    """Файл, вшитый PyInstaller (_MEIPASS), или лежащий рядом с app.py при запуске из исходников."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, name)
+
+def _launcher_dir():
+    return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+
+def _support_file(name):
+    """Файл поставки (aria2c.exe, .torrent): рядом с лаунчером, иначе вшитый в exe."""
+    local = os.path.join(_launcher_dir(), name)
+    if os.path.isfile(local):
+        return local
+    bundled = _bundled(name)
+    return bundled if os.path.isfile(bundled) else local
+
+def _pick_update_asset(assets):
+    """Ссылка на PLGamesLauncher.exe из ассетов релиза. apply_update подменяет им текущий
+    exe, поэтому установщик или aria2c.exe сюда попасть не должны."""
+    for asset in assets or []:
+        if str(asset.get("name", "")).lower() == "plgameslauncher.exe":
+            return asset.get("browser_download_url", "")
+    return ""
+
+def _appdata_dir():
+    return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "PLGamesLauncher")
+
+def _bare_filename(name):
+    """Имя файла без каталогов (значения из серверного манифеста), иначе ""."""
+    name = str(name or "")
+    if not name or name in (".", "..") or os.path.basename(name) != name or "/" in name or "\\" in name or ":" in name:
+        return ""
+    return name
 
 # ---------------------------------------------------------------------------
 # NEWS / MEDIA HELPERS (multi-project)
@@ -259,21 +297,6 @@ def _shape_news_items(items, base):
 # GAME UTILS
 # ---------------------------------------------------------------------------
 
-def _safe_join(base, rel):
-    """Join rel onto base, refusing absolute paths or ones that escape base.
-    Defends against server-supplied realmlist_paths like '..\\..\\' or 'C:/Windows/...'."""
-    if not rel:
-        return None
-    full = os.path.abspath(os.path.normpath(os.path.join(base, rel)))
-    base_abs = os.path.abspath(os.path.normpath(base))
-    try:
-        if os.path.commonpath([base_abs, full]) != base_abs:
-            return None
-    except ValueError:
-        # Different drives on Windows
-        return None
-    return full
-
 def set_realmlist(gp, val, paths):
     for rel in paths:
         full = _safe_join(gp, rel)
@@ -297,42 +320,29 @@ def set_realmlist(gp, val, paths):
             except Exception:
                 pass
 
-def read_config_wtf(gp):
-    cfg = {}
-    p = os.path.join(gp, "WTF", "Config.wtf")
-    if not os.path.isfile(p): return cfg
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            for line in f:
-                m = re.match(r'^SET\s+(\S+)\s+"?([^"]*)"?\s*$', line.strip())
-                if m: cfg[m.group(1)] = m.group(2)
-    except Exception:
-        pass
-    return cfg
+def _addons_src_dir():
+    """Папка с нашими аддонами: из PyInstaller-бандла (_MEIPASS/addons) или из исходника."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "addons")
 
-def write_config_wtf(gp, settings):
-    p = os.path.join(gp, "WTF", "Config.wtf")
-    lines, written = [], set()
-    if os.path.isfile(p):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                for line in f:
-                    m = re.match(r'^SET\s+(\S+)\s+', line.strip())
-                    if m and m.group(1) in settings:
-                        k = m.group(1)
-                        lines.append(f'SET {k} "{settings[k]}"\n')
-                        written.add(k)
-                    else:
-                        lines.append(line if line.endswith("\n") else line + "\n")
-        except Exception:
-            pass
-    for k, v in settings.items():
-        if k not in written:
-            lines.append(f'SET {k} "{v}"\n')
+def deploy_addons(gp):
+    """Кладёт наши аддоны в <game>/Interface/AddOns (перезаписывает = всегда свежие).
+    Best-effort: никогда не блокирует запуск игры. SavedVariables (в WTF/) не трогаются."""
     try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+        import shutil
+        src = _addons_src_dir()
+        if not os.path.isdir(src):
+            return
+        dst_root = os.path.join(gp, "Interface", "AddOns")
+        os.makedirs(dst_root, exist_ok=True)
+        for name in os.listdir(src):
+            s = os.path.join(src, name)
+            if not os.path.isdir(s):
+                continue
+            d = os.path.join(dst_root, name)
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+            shutil.copytree(s, d)
     except Exception:
         pass
 
@@ -343,29 +353,6 @@ def detect_game_path():
             return d
         d = os.path.dirname(d)
     return None
-
-def mpq_status(gp, fname, folder):
-    base = os.path.join(gp, folder)
-    active = os.path.join(base, fname)
-    disabled = active + ".disabled"
-    if os.path.isfile(active):
-        return True, True, round(os.path.getsize(active)/1048576, 1)
-    if os.path.isfile(disabled):
-        return True, False, round(os.path.getsize(disabled)/1048576, 1)
-    return False, False, 0
-
-def toggle_mpq(gp, fname, folder, enable):
-    base = os.path.join(gp, folder)
-    active = os.path.join(base, fname)
-    disabled = active + ".disabled"
-    try:
-        if enable and os.path.isfile(disabled):
-            os.rename(disabled, active)
-        elif not enable and os.path.isfile(active):
-            os.rename(active, disabled)
-        return True
-    except Exception:
-        return False
 
 # ---------------------------------------------------------------------------
 # TORRENT DOWNLOADER
@@ -385,8 +372,7 @@ class TorrentManager:
         self._last_status = {"state": "idle"}
 
     def _aria2c_path(self):
-        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(launcher_dir, "aria2c.exe")
+        return _support_file("aria2c.exe")
 
     def start(self, torrent_source, save_path):
         """Start download via aria2c. Supports .torrent files, magnet links, URLs."""
@@ -399,10 +385,12 @@ class TorrentManager:
         self._error = ""
         os.makedirs(save_path, exist_ok=True)
 
-        # Resolve relative .torrent paths
+        # Resolve relative .torrent paths: next to the launcher, else bundled into the exe
         if not torrent_source.startswith(('magnet:', 'http')) and not os.path.isabs(torrent_source):
-            launcher_dir = os.path.dirname(aria2c)
-            resolved = os.path.join(launcher_dir, torrent_source)
+            if _bare_filename(torrent_source):
+                resolved = _support_file(torrent_source)
+            else:
+                resolved = os.path.join(_launcher_dir(), torrent_source)
             if os.path.isfile(resolved):
                 torrent_source = resolved
 
@@ -572,13 +560,7 @@ class SeedManager:
         self._last_error = ""
 
     def _aria2c_path(self):
-        # PyInstaller bundles aria2c into _MEIPASS temp dir
-        if getattr(sys, '_MEIPASS', None):
-            p = os.path.join(sys._MEIPASS, "aria2c.exe")
-            if os.path.isfile(p):
-                return p
-        launcher_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(launcher_dir, "aria2c.exe")
+        return _support_file("aria2c.exe")
 
     def start(self, torrent_source, data_dir):
         """Start seeding. data_dir is the PARENT folder containing the torrent's root folder."""
@@ -716,8 +698,13 @@ _seed_mgr = SeedManager()
 class Api:
     def __init__(self):
         self.settings = load_settings()
-        self.window = None
+        self._window = None  # с подчёркиванием: pywebview не обходит такие атрибуты при экспорте в JS
         self.projects = fetch_manifest()
+        self._extract = client_install.ExtractJob()
+        self._editions = EditionService(CONTENT_MANIFEST_URLS,
+                                        os.path.join(_appdata_dir(), "content-manifest.json"),
+                                        _bundled("content_default.json"))
+        self._editions.preload()
 
     def get_projects(self):
         return json.dumps([{
@@ -727,7 +714,11 @@ class Api:
             "icon_url": p.get("icon_url", ""),
             "bg_images": p.get("bg_images", []),
             "connection_info": p.get("connection_info"),
+            "has_editions": bool(p.get("editions")),
         } for p in self.projects])
+
+    def _proj(self, pid):
+        return next((p for p in self.projects if p["id"] == pid), None)
 
     def get_connection_info(self, pid):
         proj = next((p for p in self.projects if p["id"] == pid), None)
@@ -765,7 +756,7 @@ class Api:
         return p
 
     def browse_game_path(self, pid):
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(_FOLDER_DIALOG)
         if result and len(result) > 0:
             path = result[0]
             self.settings.setdefault("game_paths", {})[pid] = path
@@ -792,9 +783,14 @@ class Api:
         gp = self.settings.get("game_paths", {}).get(pid, "")
         if not gp or not os.path.isdir(gp):
             return json.dumps({"ok": False, "msg": "Укажите папку с игрой"})
+        if self._editions.busy():
+            return json.dumps({"ok": False, "msg": "Дождитесь окончания смены издания"})
 
         if proj.get("realmlist"):
             set_realmlist(gp, proj["realmlist"], proj["realmlist_paths"])
+            # Кладём наши аддоны (Live City и пр.) в WoW-клиент при каждом запуске — все
+            # получают автоматически, всегда свежую версию. Best-effort, запуск не блокирует.
+            deploy_addons(gp)
 
         exe = os.path.join(gp, proj["exe"])
         if not os.path.isfile(exe):
@@ -925,27 +921,96 @@ class Api:
             "news": news_data.get("news", []),
         })
 
-    def get_hd_patches(self, pid):
-        proj = next((p for p in self.projects if p["id"] == pid), None)
-        gp = self.settings.get("game_paths", {}).get(pid, "")
-        if not proj or not gp or not os.path.isdir(gp):
-            return json.dumps([])
-        result = []
-        cats = {"weapon": "Модели оружия", "texture": "HD Текстуры", "model": "HD Модели", "fx": "HD Эффекты"}
-        for fname, info in proj.get("hd_patches", {}).items():
-            installed, enabled, size = mpq_status(gp, fname, info["folder"])
-            result.append({
-                "file": fname, "name": info["name"],
-                "cat": cats.get(info["cat"], info["cat"]),
-                "folder": info["folder"],
-                "installed": installed, "enabled": enabled, "size": size,
-            })
-        return json.dumps(result)
+    # ---- GRAPHIC EDITIONS (Классика / Ремастер / Ультра / Своё) ----
 
-    def toggle_hd_patch(self, pid, fname, folder, enable):
+    def get_editions(self, pid):
+        proj = self._proj(pid)
+        if not proj or not proj.get("editions"):
+            return json.dumps({"ok": False, "msg": "Для этого проекта издания недоступны"})
+        try:
+            return json.dumps(self._editions.view(self.get_game_path(pid)))
+        except content.ManifestError as e:
+            return json.dumps({"ok": False, "msg": str(e)})
+
+    def apply_edition(self, pid, edition_id):
+        if not (self._proj(pid) or {}).get("editions"):
+            return json.dumps({"ok": False, "msg": "Для этого проекта издания недоступны"})
+        ok, msg = self._editions.start_apply(self.get_game_path(pid), edition_id=str(edition_id))
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def set_components(self, pid, ids_json):
+        """Режим «Своё»: применить ровно этот набор компонентов."""
+        if not (self._proj(pid) or {}).get("editions"):
+            return json.dumps({"ok": False, "msg": "Для этого проекта издания недоступны"})
+        try:
+            ids = json.loads(ids_json)
+        except ValueError:
+            ids = None
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            return json.dumps({"ok": False, "msg": "Неверный список компонентов"})
+        ok, msg = self._editions.start_apply(self.get_game_path(pid), component_ids=ids)
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def get_edition_status(self):
+        return json.dumps(self._editions.status())
+
+    # ---- CLIENT INSTALL (распаковка архива после торрента) ----
+
+    def _client_archive_path(self, pid):
+        saved = self.settings.get("client_archives", {}).get(pid, "")
+        if saved and os.path.isfile(saved):
+            return saved
+        proj = self._proj(pid)
         gp = self.settings.get("game_paths", {}).get(pid, "")
-        if not gp: return json.dumps(False)
-        return json.dumps(toggle_mpq(gp, fname, folder, enable))
+        name = _bare_filename((proj or {}).get("client_archive", ""))
+        if name and gp and os.path.isfile(os.path.join(gp, name)):
+            return os.path.join(gp, name)
+        return ""
+
+    def start_extract(self, pid, archive=""):
+        archive = archive or self._client_archive_path(pid)
+        if not archive:
+            return json.dumps({"ok": False, "msg": "Архив клиента не найден — скачайте игру или укажите архив"})
+
+        def on_done(game_dir):
+            self.settings.setdefault("game_paths", {})[pid] = game_dir
+            save_settings(self.settings)
+
+        ok, msg = self._extract.start(archive, os.path.dirname(archive), on_done=on_done)
+        if ok:
+            self.settings.setdefault("client_archives", {})[pid] = archive
+            save_settings(self.settings)
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def get_extract_status(self, pid):
+        st = self._extract.status()
+        archive = self._client_archive_path(pid)
+        st["archive_gb"] = round(os.path.getsize(archive) / 2**30, 1) if archive else 0
+        return json.dumps(st)
+
+    def cancel_extract(self):
+        self._extract.cancel()
+        return json.dumps({"ok": True})
+
+    def browse_archive(self, pid):
+        result = self._window.create_file_dialog(_OPEN_DIALOG, file_types=("Архив клиента (*.rar;*.zip;*.7z)",))
+        if not result:
+            return json.dumps({"ok": False, "msg": ""})
+        return self.start_extract(pid, result[0])
+
+    def delete_client_archive(self, pid):
+        archive = self._client_archive_path(pid)
+        if not archive:
+            return json.dumps({"ok": False, "msg": "Архив не найден"})
+        if _seed_mgr.status().get("active"):
+            return json.dumps({"ok": False, "msg": "Сначала остановите раздачу — она использует архив"})
+        try:
+            os.remove(archive)
+        except OSError as e:
+            return json.dumps({"ok": False, "msg": f"Не удалось удалить архив: {e}"})
+        self.settings.get("client_archives", {}).pop(pid, None)
+        save_settings(self.settings)
+        return json.dumps({"ok": True})
 
     def get_graphic_settings(self, pid):
         proj = next((p for p in self.projects if p["id"] == pid), None)
@@ -1185,16 +1250,7 @@ class Api:
                 tag = data.get("tag_name", "")
                 remote_ver = tag.lstrip("v")
                 if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
-                    download_url = ""
-                    for asset in data.get("assets", []):
-                        if asset["name"].lower().endswith(".exe") and "setup" in asset["name"].lower():
-                            download_url = asset["browser_download_url"]
-                            break
-                    if not download_url:
-                        for asset in data.get("assets", []):
-                            if asset["name"].lower().endswith(".exe"):
-                                download_url = asset["browser_download_url"]
-                                break
+                    download_url = _pick_update_asset(data.get("assets", []))
                     return json.dumps({
                         "has_update": True,
                         "current": LAUNCHER_VERSION,
@@ -1224,14 +1280,7 @@ class Api:
                              headers={"Accept": "application/vnd.github.v3+json"})
             if r.status_code != 200:
                 return ""
-            assets = r.json().get("assets", [])
-            for asset in assets:  # prefer an installer/setup .exe
-                n = asset.get("name", "").lower()
-                if n.endswith(".exe") and "setup" in n:
-                    return asset.get("browser_download_url", "")
-            for asset in assets:  # else any .exe
-                if asset.get("name", "").lower().endswith(".exe"):
-                    return asset.get("browser_download_url", "")
+            return _pick_update_asset(r.json().get("assets", []))
         except Exception:
             pass
         return ""
@@ -1387,7 +1436,7 @@ class Api:
                     f.write('del "%~f0"\r\n')
                 _seed_mgr.stop()
                 subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
-                self.window.destroy()
+                self._window.destroy()
                 return json.dumps({"ok": True})
             else:
                 return json.dumps({"ok": False, "msg": "Обновление доступно только для .exe версии"})
@@ -1406,7 +1455,7 @@ class Api:
             return json.dumps({"ok": False, "msg": "Торрент не настроен для этого проекта"})
 
         # Always ask user where to save (install = new download)
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG, directory="")
+        result = self._window.create_file_dialog(_FOLDER_DIALOG, directory="")
         if not result or len(result) == 0:
             return json.dumps({"ok": False, "msg": "Не выбрана папка"})
         save_path = result[0]
@@ -1418,8 +1467,13 @@ class Api:
             game_dir = save_path
             torrent_name = proj.get("torrent_folder", "")
             if torrent_name:
-                game_dir = os.path.join(save_path, torrent_name)
+                # Может прийти с сервера — не выпускаем за пределы выбранной папки.
+                game_dir = _safe_join(save_path, torrent_name) or save_path
             self.settings.setdefault("game_paths", {})[pid] = game_dir
+            archive = _bare_filename(proj.get("client_archive", ""))
+            if archive:
+                # После докачки архив распаковывается (start_extract) — запоминаем, где он.
+                self.settings.setdefault("client_archives", {})[pid] = os.path.join(save_path, archive)
             save_settings(self.settings)
             return json.dumps({"ok": True, "save_path": game_dir})
         return json.dumps({"ok": False, "msg": _torrent_mgr._error or "Ошибка запуска"})
@@ -1468,8 +1522,8 @@ class Api:
 
         if not data_dir:
             # Ask user to select folder containing the .rar file
-            result = self.window.create_file_dialog(
-                webview.FOLDER_DIALOG,
+            result = self._window.create_file_dialog(
+                _FOLDER_DIALOG,
                 directory=os.path.dirname(game_path) if game_path else "",
             )
             if not result or len(result) == 0:
@@ -1491,17 +1545,26 @@ class Api:
         return json.dumps(_seed_mgr.status())
 
     def minimize_window(self):
-        self.window.minimize()
+        self._window.minimize()
 
     def maximize_window(self):
-        if self.window.maximized:
-            self.window.restore()
+        if self._window.maximized:
+            self._window.restore()
         else:
-            self.window.maximize()
+            self._window.maximize()
 
     def close_window(self):
+        self._shutdown()
+        self._window.destroy()
+
+    def _shutdown(self):
+        """Не оставлять работу после закрытия окна: распаковщик убивается (staging убирается),
+        загрузка издания отменяется, а уже начатое изменение клиента дожидается конца."""
+        self._extract.cancel()
+        self._editions.cancel()
+        self._extract.join(10)
+        self._editions.join(15)
         _seed_mgr.stop()
-        self.window.destroy()
 
 # ---------------------------------------------------------------------------
 # HTML
@@ -1891,6 +1954,58 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .setting-info{font-size:10px;color:var(--text-dim);font-weight:500}
 .setting-right{display:flex;align-items:center;gap:10px}
 
+/* ===== EDITIONS (графические издания в духе WoW: Forever) ===== */
+.ed-page{padding:26px 28px 40px;display:flex;flex-direction:column;gap:22px}
+.ed-loading,.ed-empty{padding:40px 0;text-align:center;color:var(--text-sec);font-size:13px}
+.ed-head{text-align:center;max-width:640px;margin:0 auto}
+.ed-kicker{font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+.ed-title{font-family:'Cinzel',serif;font-size:30px;font-weight:700;color:#fff;text-shadow:0 2px 14px rgba(0,0,0,0.6);margin-bottom:8px}
+.ed-sub{font-size:12.5px;line-height:1.6;color:var(--text-sec)}
+.ed-note{text-align:center;font-size:12px;color:var(--orange);background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:10px 14px}
+.ed-grid,.ed-row{display:grid;grid-template-columns:minmax(170px,1.15fr) repeat(var(--ed-cols,3),minmax(0,1fr));gap:14px;align-items:stretch}
+.ed-card{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:0 0 14px;border-radius:12px;background:var(--card);border:1px solid var(--border);overflow:hidden;transition:transform .2s,border-color .2s,box-shadow .2s}
+.ed-card:hover{transform:translateY(-2px);border-color:var(--border-l)}
+.ed-card.active{border-color:var(--ed-tone);box-shadow:0 0 0 1px var(--ed-tone),0 8px 28px var(--ed-glow)}
+.ed-card-art{position:relative;width:100%;aspect-ratio:16/9;background-size:cover;background-position:center;
+  background-image:radial-gradient(circle at 50% 45%,var(--ed-glow) 0%,transparent 62%),linear-gradient(135deg,var(--ed-a),var(--ed-b));
+  display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border)}
+.ed-card-art::before{content:'';position:absolute;inset:6px;border:1px solid rgba(255,255,255,0.14);border-radius:6px;pointer-events:none}
+.ed-mark{font-family:'Cinzel',serif;font-size:38px;font-weight:800;color:rgba(255,255,255,0.85);text-shadow:0 2px 16px rgba(0,0,0,0.5)}
+.ed-card-art.has-img .ed-mark{display:none}
+.ed-badge{position:absolute;top:10px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9.5px;font-weight:700;letter-spacing:.4px;
+  color:#0b1a10;background:var(--green);padding:3px 9px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.35)}
+.ed-card-name{font-family:'Cinzel',serif;font-size:17px;font-weight:700;color:#fff;margin-top:4px;padding:0 10px}
+.ed-card-tag{font-size:11px;color:var(--text-sec);line-height:1.45;padding:0 12px;min-height:32px}
+.ed-btn{margin-top:auto;min-width:120px;padding:9px 18px;border:none;border-radius:6px;background:var(--blue-btn);color:#fff;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;transition:all .2s}
+.ed-btn:hover:not(:disabled){background:var(--blue-btn-h);transform:translateY(-1px)}
+.ed-btn:disabled{opacity:.45;cursor:default}
+.ed-btn.current{background:transparent;border:1px solid var(--ed-tone);color:var(--ed-tone);opacity:1}
+.ed-card{--ed-a:#1e2230;--ed-b:#2c3346;--ed-tone:var(--accent);--ed-glow:var(--accent-glow)}
+.ed-card.ed-theme-classic{--ed-a:#3a2a18;--ed-b:#7a5a33;--ed-tone:#d6a45c;--ed-glow:rgba(214,164,92,0.28)}
+.ed-card.ed-theme-remaster{--ed-a:#0d2740;--ed-b:#1f6aa5;--ed-tone:#4fb3ff;--ed-glow:rgba(79,179,255,0.3)}
+.ed-card.ed-theme-ultra{--ed-a:#2b1640;--ed-b:#8a5a1a;--ed-tone:#ffcc55;--ed-glow:rgba(255,204,85,0.3)}
+.ed-table{display:flex;flex-direction:column;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+.ed-table .ed-row{padding:10px 0;background:var(--card)}
+.ed-table .ed-row:nth-child(even){background:rgba(38,42,54,0.75)}
+.ed-row-label{font-size:12px;color:var(--text);padding-left:16px;line-height:1.4;display:flex;align-items:center}
+.ed-cell{display:flex;align-items:center;justify-content:center}
+.ed-check{color:var(--green);font-size:15px;font-weight:800}
+.ed-dash{color:var(--text-dim)}
+.ed-foot{text-align:center;font-size:12px;color:var(--text-sec)}
+.ed-foot a{color:var(--accent);cursor:pointer;text-decoration:none}
+.ed-foot a:hover{text-decoration:underline}
+.ed-progress{display:none;flex-direction:column;gap:6px}
+.ed-progress.active{display:flex}
+.ed-progress-track{height:6px;border-radius:3px;background:rgba(255,255,255,0.06);overflow:hidden}
+.ed-progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent-dark),var(--accent));transition:width .3s}
+.ed-progress-text{font-size:11px;color:var(--text-sec);text-align:center}
+.edition-cta{display:none;margin-top:12px;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;cursor:pointer;
+  background:rgba(0,174,255,0.12);border:1px solid rgba(0,174,255,0.35);color:#fff;font-size:12px;font-weight:600;width:fit-content;transition:background .2s}
+.edition-cta:hover{background:rgba(0,174,255,0.22)}
+.edition-cta.visible{display:flex}
+.install-alt{display:block;margin-top:8px;font-size:11px;color:var(--accent);cursor:pointer;background:none;border:none;font-family:inherit;padding:0;text-align:left}
+.install-alt:hover{text-decoration:underline}
+
 .toggle{position:relative;width:40px;height:22px;cursor:pointer}
 .toggle input{display:none}
 .toggle .slider{
@@ -2046,6 +2161,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
   </div>
   <div class="topbar-nav pywebview-no-drag">
     <button class="topbar-nav-btn active" data-page="games" onclick="showPage('games')">ИГРАТЬ</button>
+    <button class="topbar-nav-btn" data-page="editions" id="nav-editions" onclick="showPage('editions')" style="display:none">ИЗДАНИЯ</button>
     <button class="topbar-nav-btn" data-page="news" onclick="showPage('news')">НОВОСТИ</button>
     <button class="topbar-nav-btn" data-page="settings" onclick="showPage('settings')">НАСТРОЙКИ</button>
   </div>
@@ -2062,7 +2178,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
     <button class="topbar-wbtn" onclick="pywebview.api.maximize_window()">
       <svg width="11" height="11" viewBox="0 0 11 11"><rect x="1.5" y="1.5" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/></svg>
     </button>
-    <button class="topbar-wbtn close" onclick="pywebview.api.close_window()">
+    <button class="topbar-wbtn close" onclick="closeLauncher()">
       <svg width="11" height="11" viewBox="0 0 11 11"><line x1="2" y1="2" x2="9" y2="9" stroke="currentColor" stroke-width="1.2"/><line x1="9" y1="2" x2="2" y2="9" stroke="currentColor" stroke-width="1.2"/></svg>
     </button>
   </div>
@@ -2098,9 +2214,9 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
             Новости
           </button>
-          <button class="hero-sidebar-btn" onclick="showPage('settings')">
+          <button class="hero-sidebar-btn" onclick="openGraphics()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            Настройки HD
+            <span id="hero-graphics-label">Настройки</span>
           </button>
         </div>
         <!-- Right side: project info -->
@@ -2111,6 +2227,9 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
           </div>
           <div class="hero-title" id="hero-title">Realm Chronos</div>
           <div class="hero-text" id="hero-text"></div>
+          <div class="edition-cta" id="edition-cta" onclick="showPage('editions')">
+            <span style="color:#ffd666">&#10022;</span> Новое: графические издания клиента — выберите своё &rarr;
+          </div>
         </div>
         <!-- Slide indicators -->
         <div class="hero-indicators" id="hero-indicators"></div>
@@ -2177,6 +2296,11 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
         <div class="news-full-title">Новости</div>
         <div class="news-grid" id="news-grid"></div>
       </div>
+    </div>
+
+    <!-- EDITIONS PAGE -->
+    <div class="page-view" id="view-editions">
+      <div class="ed-page" id="editions-content"></div>
     </div>
 
     <!-- SETTINGS FULL PAGE -->
@@ -2259,6 +2383,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
         <div class="path-val" id="play-path">Не указана</div>
         <button class="path-browse" onclick="browsePath()">Обзор...</button>
       </div>
+      <button class="install-alt" id="install-alt" style="display:none" onclick="startExtract('browse')">Уже скачали архив клиента? Распаковать…</button>
     </div>
 
     <!-- About + Update -->
@@ -2410,6 +2535,15 @@ async function selectProject(pid, save=true) {
     b.classList.toggle('active', b.dataset.pid === activeProject.id);
   });
 
+  // Вкладка «Издания» — только у проектов с графическими изданиями (WoW)
+  document.getElementById('nav-editions').style.display = activeProject.has_editions ? '' : 'none';
+  document.getElementById('hero-graphics-label').textContent =
+    activeProject.has_editions ? 'Графические издания' : 'Настройки';
+  const edBox = document.getElementById('editions-content');
+  delete edBox.dataset.loaded;
+  edView = null;
+  if (!activeProject.has_editions && currentPage === 'editions') showPage('games');
+
   // Update hero images from project or news
   HERO_IMAGES = (activeProject.bg_images && activeProject.bg_images.length)
     ? [...activeProject.bg_images]
@@ -2432,10 +2566,17 @@ function showPage(page) {
   const gameView = document.getElementById('view-game');
   const newsView = document.getElementById('view-news');
   const settingsView = document.getElementById('view-settings');
+  const editionsView = document.getElementById('view-editions');
 
   gameView.className = 'main-view' + (page === 'games' ? '' : ' hidden');
   newsView.className = 'page-view' + (page === 'news' ? ' active fade-in' : '');
   settingsView.className = 'page-view' + (page === 'settings' ? ' active fade-in' : '');
+  editionsView.className = 'page-view' + (page === 'editions' ? ' active fade-in' : '');
+  if (page === 'editions') loadEditions();
+}
+
+function openGraphics() {
+  showPage(activeProject && activeProject.has_editions ? 'editions' : 'settings');
 }
 
 // ==================== HERO SLIDER ====================
@@ -2502,9 +2643,13 @@ async function loadGameView() {
   const seedWrap = document.getElementById('seed-wrap');
   const dlBar = document.getElementById('download-bar');
   const connPanel = document.getElementById('connection-panel');
+  const edCta = document.getElementById('edition-cta');
+  const installAlt = document.getElementById('install-alt');
   btnInstall.style.display = 'none';
   seedWrap.classList.remove('visible');
-  dlBar.className = 'download-bar';
+  edCta.classList.remove('visible');
+  installAlt.style.display = 'none';
+  if (!extractActive) dlBar.className = 'download-bar';
 
   // Hide connection panel by default
   if (connPanel) connPanel.style.display = 'none';
@@ -2529,9 +2674,10 @@ async function loadGameView() {
     if (!gp) {
       // No game installed — show INSTALL button
       btn.style.display = 'none';
-      btnInstall.style.display = '';
+      btnInstall.style.display = extractActive ? 'none' : '';
       document.getElementById('path-section').style.display = '';
       document.getElementById('play-path').textContent = 'Не установлена';
+      if (p.has_editions && !extractActive) installAlt.style.display = '';
     } else {
       btn.className = 'btn-play';
       btn.textContent = 'ИГРАТЬ';
@@ -2542,6 +2688,13 @@ async function loadGameView() {
       document.getElementById('play-path').textContent = gp;
       // Check if already seeding
       updateSeedButton();
+      // Издание ещё не выбрано — зовём на вкладку «Издания»
+      if (p.has_editions) {
+        try {
+          const v = JSON.parse(await pywebview.api.get_editions(p.id));
+          if (v.ok && v.installed && v.chosen === null && activeProject.id === p.id) edCta.classList.add('visible');
+        } catch(e) {}
+      }
     }
   }
   document.getElementById('launch-msg').textContent = '';
@@ -2670,28 +2823,36 @@ async function loadSettings() {
   container.innerHTML = '';
   const pid = activeProject.id;
 
+  // Компоненты графических изданий — режим «Своё»
   try {
-    const patches = JSON.parse(await pywebview.api.get_hd_patches(pid));
-    if (patches.length > 0) {
-      const cats = {};
-      patches.forEach(p => { (cats[p.cat] = cats[p.cat] || []).push(p); });
-      for (const [cat, list] of Object.entries(cats)) {
-        let html = `<div class="settings-section"><h3>${cat}</h3>`;
-        list.forEach(p => {
-          if (!p.installed) {
-            html += `<div class="setting-row"><span class="setting-label" style="color:var(--text-dim)">${p.name}</span><span class="setting-info">не установлен</span></div>`;
-          } else {
-            html += `<div class="setting-row">
-              <span class="setting-label">${p.name}</span>
-              <div class="setting-right">
-                <span class="setting-info">${p.size} MB</span>
-                <label class="toggle">
-                  <input type="checkbox" ${p.enabled?'checked':''} onchange="togglePatch('${p.file}','${p.folder}',this.checked)">
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>`;
+    const v = activeProject.has_editions ? JSON.parse(await pywebview.api.get_editions(pid)) : null;
+    if (v && v.ok && v.installed) {
+      edView = v;
+      const busy = v.job && v.job.state === 'running';
+      container.innerHTML += `<div class="settings-section"><h3>Графическое издание</h3>
+        <div class="setting-row"><span class="setting-label">Сейчас: <b>${esc(editionName(v.active))}</b></span>
+        <div class="setting-right"><button class="path-browse" onclick="showPage('editions')">Выбрать издание</button></div></div>
+        <p style="color:var(--text-sec);font-size:11px;margin-top:6px">Переключатели ниже собирают издание «Своё». Изменения применяются сразу; игра должна быть закрыта.</p></div>`;
+      const groups = {};
+      v.components.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+      for (const [group, list] of Object.entries(groups)) {
+        let html = `<div class="settings-section"><h3>${esc(group)}</h3>`;
+        list.forEach(c => {
+          if (!c.available) {
+            html += `<div class="setting-row"><span class="setting-label" style="color:var(--text-dim)">${esc(c.name)}</span><span class="setting-info">нет в клиенте</span></div>`;
+            return;
           }
+          const note = c.outdated ? 'есть обновление' : (c.type === 'files' && !c.active ? 'скачается' : '');
+          html += `<div class="setting-row">
+            <span class="setting-label">${esc(c.name)}</span>
+            <div class="setting-right">
+              ${note ? `<span class="setting-info">${note}</span>` : ''}
+              <label class="toggle">
+                <input type="checkbox" ${c.active ? 'checked' : ''} ${busy ? 'disabled' : ''} onchange="toggleComponent('${esc(c.id)}', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>`;
         });
         html += '</div>';
         container.innerHTML += html;
@@ -2729,8 +2890,123 @@ async function loadSettings() {
   }
 }
 
-async function togglePatch(file, folder, enable) {
-  await pywebview.api.toggle_hd_patch(activeProject.id, file, folder, enable);
+// ==================== EDITIONS ====================
+
+let edView = null;
+let edPollTimer = null;
+const ED_THEMES = {classic: 'ed-theme-classic', remaster: 'ed-theme-remaster', ultra: 'ed-theme-ultra'};
+const ED_MARKS = ['I', 'II', 'III', 'IV', 'V'];
+
+function editionName(id) {
+  if (id === 'custom') return 'Своё';
+  const e = edView && edView.editions.find(x => x.id === id);
+  return e ? e.name : '—';
+}
+
+async function loadEditions() {
+  const box = document.getElementById('editions-content');
+  if (!box.dataset.loaded) box.innerHTML = '<div class="ed-loading">Загрузка изданий…</div>';
+  let v;
+  try { v = JSON.parse(await pywebview.api.get_editions(activeProject.id)); }
+  catch(e) { v = {ok: false, msg: 'Не удалось загрузить издания'}; }
+  if (!v.ok) {
+    box.innerHTML = `<div class="ed-empty">${esc(v.msg || 'Издания недоступны')}</div>`;
+    return;
+  }
+  edView = v;
+  box.dataset.loaded = '1';
+  renderEditions();
+  if (v.job && v.job.state === 'running' && !edPollTimer) pollEditionStatus();
+}
+
+function renderEditions() {
+  const v = edView;
+  const box = document.getElementById('editions-content');
+  const busy = v.job && v.job.state === 'running';
+  const cols = `style="--ed-cols:${v.editions.length}"`;
+  let h = `<div class="ed-head">
+      <div class="ed-kicker">Графические издания</div>
+      <div class="ed-title">Азерот в новом свете</div>
+      <div class="ed-sub">Выберите, как выглядит ваш клиент. Издание можно сменить в любой момент — персонажи и прогресс не затрагиваются.</div>
+    </div>`;
+  if (!v.installed) {
+    h += '<div class="ed-note">Сначала установите игру — издание можно выбрать сразу после установки.</div>';
+  }
+  h += `<div class="ed-grid" ${cols}><div></div>`;
+  v.editions.forEach((e, i) => {
+    const active = v.active === e.id;
+    const img = safeUrl(e.image);
+    h += `<div class="ed-card ${ED_THEMES[e.id] || ''} ${active ? 'active' : ''}">
+        <div class="ed-card-art ${img ? 'has-img' : ''}" ${img ? `style="background-image:url('${esc(img)}')"` : ''}>
+          <span class="ed-mark">${ED_MARKS[i] || ''}</span>
+          ${v.recommended === e.id ? '<span class="ed-badge">Рекомендуем для вашего ПК</span>' : ''}
+        </div>
+        <div class="ed-card-name">${esc(e.name)}</div>
+        <div class="ed-card-tag">${esc(e.tagline || '')}</div>
+        <button class="ed-btn ${active ? 'current' : ''}" ${(active || busy || !v.installed) ? 'disabled' : ''}
+          onclick="chooseEdition('${esc(e.id)}')">${active ? 'Активно' : 'Выбрать'}</button>
+      </div>`;
+  });
+  h += '</div><div class="ed-table">';
+  v.table.forEach(r => {
+    h += `<div class="ed-row" ${cols}><div class="ed-row-label">${esc(r.label)}</div>`;
+    v.editions.forEach(e => {
+      h += `<div class="ed-cell">${r.checks[e.id] ? '<span class="ed-check">&#10003;</span>' : '<span class="ed-dash">&mdash;</span>'}</div>`;
+    });
+    h += '</div>';
+  });
+  h += '</div>';
+  const now = v.active === 'custom' ? 'Сейчас у вас <b>«Своё»</b> издание. ' : '';
+  h += `<div class="ed-foot">${now}Хотите собрать своё? <a onclick="showPage('settings')">Настройте компоненты вручную</a></div>`;
+  h += `<div class="ed-progress ${busy ? 'active' : ''}" id="ed-progress">
+      <div class="ed-progress-track"><div class="ed-progress-fill" id="ed-progress-fill" style="width:${busy ? (v.job.progress || 0) : 0}%"></div></div>
+      <div class="ed-progress-text" id="ed-progress-text">${busy ? esc(v.job.text || '') : ''}</div>
+    </div>`;
+  box.innerHTML = h;
+}
+
+async function chooseEdition(id) {
+  document.querySelectorAll('.ed-btn').forEach(b => { b.disabled = true; });
+  let res;
+  try { res = JSON.parse(await pywebview.api.apply_edition(activeProject.id, id)); }
+  catch(e) { res = {ok: false, msg: 'Ошибка вызова'}; }
+  if (!res.ok) { alert(res.msg || 'Не удалось применить издание'); renderEditions(); return; }
+  edView.job = {state: 'running', progress: 0, text: 'Подготовка…'};
+  renderEditions();
+  pollEditionStatus();
+}
+
+async function toggleComponent(id, on) {
+  if (!edView) return;
+  const ids = new Set(edView.components.filter(c => c.active).map(c => c.id));
+  if (on) ids.add(id); else ids.delete(id);
+  document.querySelectorAll('#settings-content .toggle input').forEach(i => { i.disabled = true; });
+  let res;
+  try { res = JSON.parse(await pywebview.api.set_components(activeProject.id, JSON.stringify([...ids]))); }
+  catch(e) { res = {ok: false, msg: 'Ошибка вызова'}; }
+  if (!res.ok) { alert(res.msg || 'Не удалось применить'); loadSettings(); return; }
+  pollEditionStatus();
+}
+
+async function pollEditionStatus() {
+  if (edPollTimer) clearTimeout(edPollTimer);
+  edPollTimer = null;
+  let s = null;
+  try { s = JSON.parse(await pywebview.api.get_edition_status()); } catch(e) {}
+  if (s && s.state === 'running') {
+    const fill = document.getElementById('ed-progress-fill');
+    const text = document.getElementById('ed-progress-text');
+    const wrap = document.getElementById('ed-progress');
+    if (wrap) wrap.classList.add('active');
+    if (fill) fill.style.width = (s.progress || 0) + '%';
+    if (text) text.textContent = s.text || 'Применение…';
+    edPollTimer = setTimeout(pollEditionStatus, 400);
+    return;
+  }
+  if (s && s.state === 'error') alert(s.error || 'Не удалось применить издание');
+  if (currentPage === 'editions') await loadEditions();
+  if (currentPage === 'settings') loadSettings();
+  loadGameView();
 }
 
 async function saveGfx() {
@@ -2911,12 +3187,9 @@ async function pollDownloadStatus() {
     const s = JSON.parse(await pywebview.api.get_download_status());
 
     if (s.state === 'finished' || s.state === 'seeding') {
+      // Торрент докачан — это архив клиента, его нужно распаковать
       hideDownloadBar();
-      document.getElementById('btn-play').style.display = '';
-      document.getElementById('btn-play').className = 'btn-play';
-      document.getElementById('btn-play').textContent = 'ИГРАТЬ';
-      document.getElementById('btn-play').disabled = false;
-      loadGameView();
+      startExtract();
       return;
     }
 
@@ -2967,10 +3240,76 @@ function togglePauseDownload() {
 }
 
 async function cancelDownload() {
+  if (extractActive) {
+    if (!confirm('Прервать распаковку? Уже распакованные файлы будут удалены, архив останется.')) return;
+    await pywebview.api.cancel_extract();
+    return;  // pollExtractStatus увидит «cancelled» и вернёт кнопки
+  }
   if (!confirm('Отменить загрузку?')) return;
   await pywebview.api.cancel_download();
   hideDownloadBar();
   document.getElementById('btn-install').style.display = '';
+}
+
+async function closeLauncher() {
+  let busy = extractActive;
+  try { busy = busy || JSON.parse(await pywebview.api.get_edition_status()).state === 'running'; } catch(e) {}
+  if (busy && !confirm('Идёт установка клиента или смена издания. Прервать и закрыть лаунчер?')) return;
+  pywebview.api.close_window();
+}
+
+// ==================== CLIENT EXTRACT ====================
+
+let extractActive = false;
+let exPollTimer = null;
+
+async function startExtract(mode) {
+  let res;
+  try {
+    res = JSON.parse(mode === 'browse'
+      ? await pywebview.api.browse_archive(activeProject.id)
+      : await pywebview.api.start_extract(activeProject.id));
+  } catch(e) { res = {ok: false, msg: 'Ошибка запуска распаковки'}; }
+  if (!res.ok) {
+    if (res.msg) alert(res.msg);
+    loadGameView();
+    return;
+  }
+  extractActive = true;
+  showDownloadBar();
+  document.getElementById('dl-pause-btn').style.display = 'none';
+  document.getElementById('install-alt').style.display = 'none';
+  pollExtractStatus();
+}
+
+async function pollExtractStatus() {
+  let s = null;
+  try { s = JSON.parse(await pywebview.api.get_extract_status(activeProject.id)); } catch(e) {}
+  if (s && (s.state === 'preparing' || s.state === 'extracting')) {
+    const pct = s.progress || 0;
+    document.getElementById('dl-progress-fill').style.width = pct + '%';
+    document.getElementById('dl-pct').textContent = pct + '%';
+    document.getElementById('dl-speed').textContent = s.state === 'preparing' ? 'Проверка архива…' : 'Распаковка клиента';
+    document.getElementById('dl-eta').textContent = s.total_mb
+      ? `${(s.done_mb / 1024).toFixed(1)} / ${(s.total_mb / 1024).toFixed(1)} ГБ` : '';
+    exPollTimer = setTimeout(pollExtractStatus, 1000);
+    return;
+  }
+  extractActive = false;
+  hideDownloadBar();
+  document.getElementById('dl-pause-btn').style.display = '';
+  if (s && s.state === 'finished') {
+    await loadGameView();
+    if (s.archive_gb && confirm(`Клиент установлен!\n\nУдалить архив и освободить ${s.archive_gb} ГБ?\n${s.archive}\n\n` +
+                                'Оставьте его, если хотите раздавать клиент другим игрокам.')) {
+      const d = JSON.parse(await pywebview.api.delete_client_archive(activeProject.id));
+      if (!d.ok) alert(d.msg);
+    }
+    if (activeProject.has_editions) showPage('editions');
+    return;
+  }
+  if (s && s.state === 'error') alert(s.error || 'Ошибка распаковки');
+  loadGameView();
 }
 
 // ==================== SEEDING ====================
@@ -3103,7 +3442,8 @@ def main():
         frameless=True,
         easy_drag=True,
     )
-    api.window = window
+    api._window = window
+    window.events.closing += api._shutdown  # Alt+F4 и прочие закрытия — не только кнопка «×»
     webview.start(debug=False)
 
 

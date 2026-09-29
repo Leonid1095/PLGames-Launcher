@@ -36,7 +36,7 @@ Section "Install"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PLGamesLauncher" "UninstallString" "$INSTDIR\Uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PLGamesLauncher" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PLGamesLauncher" "Publisher" "PLGames"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PLGamesLauncher" "DisplayVersion" "0.3.4"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PLGamesLauncher" "DisplayVersion" "0.4.0"
 SectionEnd
 
 Section "Uninstall"

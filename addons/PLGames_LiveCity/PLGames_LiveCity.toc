@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: PLGames |cff5fb4ffLive City|r
+## Notes: Реплики NPC показываются пузырём над головой, а не засоряют чат.
+## Author: PLGames (Realm Chronos)
+## Version: 1.0
+## SavedVariables: PLGames_LiveCityDB
+
+PLGames_LiveCity.lua
