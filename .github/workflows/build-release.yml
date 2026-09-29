@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (e.g. v0.3.4)'
+        description: 'Release tag (e.g. v0.4.0)'
         required: true
 
 permissions:
@@ -26,9 +26,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Run tests
+        run: python -m unittest discover -s tests -t . -v
+
       - name: Build exe
         run: |
           $webviewPath = python -c "import webview; import os; print(os.path.dirname(webview.__file__))"
+          # 7-Zip необязателен: без него лаунчер распаковывает клиент системным tar.exe
+          $sevenZip = @()
+          if ((Test-Path "7z.exe") -and (Test-Path "7z.dll")) { $sevenZip = @("--add-data", "7z.exe;.", "--add-data", "7z.dll;.", "--add-data", "7z-License.txt;.") }
           pyinstaller --noconsole --onefile --name "PLGamesLauncher" `
             --hidden-import "webview" `
             --hidden-import "clr" `
@@ -40,21 +46,27 @@ jobs:
             --collect-all "webview" `
             --collect-all "clr_loader" `
             --collect-all "pythonnet" `
+            --add-data "addons;addons" `
+            --add-data "content_default.json;." `
+            --add-data "aria2c.exe;." `
+            --add-data "PLGames_Wow3.3.5.torrent;." `
+            @sevenZip `
             --clean `
             app.py
 
       - name: Prepare release files
         run: |
-          if (Test-Path "aria2c.exe") { Copy-Item "aria2c.exe" "dist\aria2c.exe" }
-          if (Test-Path "PLGames_Wow3.3.5.torrent") { Copy-Item "PLGames_Wow3.3.5.torrent" "dist\PLGames_Wow3.3.5.torrent" }
+          Copy-Item "PLGames_Wow3.3.5.torrent" "dist\PLGames_Wow3.3.5.torrent"
 
+      # В релизе ровно один .exe — сам лаунчер. Автообновление 0.3.4 берёт первый .exe
+      # из ассетов и подменяет им себя: aria2c.exe или установщик здесь сломали бы игрокам лаунчер.
+      # aria2c и торрент вшиты в PLGamesLauncher.exe.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: PLGamesLauncher
           path: |
             dist/PLGamesLauncher.exe
-            dist/aria2c.exe
             dist/PLGames_Wow3.3.5.torrent
 
       - name: Create Release
@@ -63,7 +75,6 @@ jobs:
           tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
           files: |
             dist/PLGamesLauncher.exe
-            dist/aria2c.exe
             dist/PLGames_Wow3.3.5.torrent
           generate_release_notes: true
         env:
