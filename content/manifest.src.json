@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "content_version": "2026.10.1",
+  "schema": 2,
+  "content_version": "2026.10.3",
   "project": "wow_chronos",
   "components": [
     {
@@ -182,7 +182,8 @@
       "type": "files",
       "version": "3.1.1",
       "conflicts": [
-        "reshade"
+        "reshade",
+        "northlight"
       ],
       "files": [
         {
@@ -202,12 +203,13 @@
     },
     {
       "id": "reshade",
-      "name": "Новый свет: ReShade (затенение, туман, сглаживание, резкость)",
+      "name": "Фильтры ReShade: затенение, туман по глубине, сглаживание, резкость",
       "group": "Графика",
       "type": "files",
       "version": "6.8.0-addon2",
       "conflicts": [
-        "dxvk"
+        "dxvk",
+        "northlight"
       ],
       "files": [
         {
@@ -253,6 +255,586 @@
           "src": "files/reshade/6.8.0/reshade-shaders/Shaders/ReShadeUI.fxh"
         }
       ]
+    },
+    {
+      "id": "forever_dungeons",
+      "name": "Новые текстуры подземелий и зданий (Project Reforged)",
+      "group": "Forever",
+      "type": "files",
+      "version": "reforged-1.4.2-plg1",
+      "files": [
+        {
+          "path": "Data/patch-A.MPQ",
+          "src": "../dist-forever/Data/patch-A.MPQ"
+        },
+        {
+          "path": "Data/patch-B.MPQ",
+          "src": "../dist-forever/Data/patch-B.MPQ"
+        }
+      ]
+    },
+    {
+      "id": "forever_world",
+      "name": "Современные деревья, растения и здания (Project Reforged)",
+      "group": "Forever",
+      "type": "files",
+      "version": "reforged-1.4.2-plg1",
+      "files": [
+        {
+          "path": "Data/patch-C.MPQ",
+          "src": "../dist-forever/Data/patch-C.MPQ"
+        },
+        {
+          "path": "Data/patch-D.MPQ",
+          "src": "../dist-forever/Data/patch-D.MPQ"
+        }
+      ]
+    },
+    {
+      "id": "forever_terrain",
+      "name": "Новые текстуры земли и воды, модели неба (Project Reforged)",
+      "group": "Forever",
+      "type": "files",
+      "version": "reforged-1.4.2-plg1",
+      "files": [
+        {
+          "path": "Data/patch-F.MPQ",
+          "src": "../dist-forever/Data/patch-F.MPQ"
+        },
+        {
+          "path": "Data/patch-G.MPQ",
+          "src": "../dist-forever/Data/patch-G.MPQ"
+        }
+      ]
+    },
+    {
+      "id": "forever_spells",
+      "name": "Современные эффекты заклинаний (Project Reforged)",
+      "group": "Forever",
+      "type": "files",
+      "version": "reforged-1.4.2-plg1",
+      "files": [
+        {
+          "path": "Data/patch-I.MPQ",
+          "src": "../dist-forever/Data/patch-I.MPQ"
+        },
+        {
+          "path": "Data/ruRU/patch-ruRU-Y.MPQ",
+          "src": "../dist-forever/Data/ruRU/patch-ruRU-Y.MPQ"
+        }
+      ]
+    },
+    {
+      "id": "forever_sky",
+      "name": "HD-небо и освещение зон (Sectym)",
+      "group": "Forever",
+      "type": "files",
+      "version": "sectym-2026.03",
+      "files": [
+        {
+          "path": "Data/ruRU/Patch-ruRU-X.mpq",
+          "src": "../dist-forever/Data/ruRU/Patch-ruRU-X.mpq"
+        }
+      ]
+    },
+    {
+      "id": "northlight",
+      "name": "Новый свет Northlight: тени от солнца, отражённый свет, объёмный туман",
+      "group": "Forever",
+      "type": "installer",
+      "version": "0.3.183-plg1",
+      "conflicts": [
+        "reshade",
+        "dxvk"
+      ],
+      "requires": "vulkan13",
+      "fallback": "reshade",
+      "archive": {
+        "src": "../dist-forever/installers/northlight-0.3.183-plg1.zip"
+      },
+      "install": [
+        "runtime/python.exe",
+        "-I",
+        "-B",
+        "-X",
+        "utf8",
+        "app/renderer/northlight_install.py",
+        "--default-action",
+        "install",
+        "--client",
+        "{client}",
+        "--locale",
+        "{locale}",
+        "--no-art-layer",
+        "--yes"
+      ],
+      "uninstall": [
+        "runtime/python.exe",
+        "-I",
+        "-B",
+        "-X",
+        "utf8",
+        "app/renderer/northlight_install.py",
+        "--default-action",
+        "uninstall",
+        "--client",
+        "{client}",
+        "--yes"
+      ],
+      "progress": "^\\s*(?P<label>[A-Za-z0-9]+): (?P<pct>\\d+)%",
+      "marker": "northlight-renderer.ini"
+    },
+    {
+      "id": "addon_questie",
+      "name": "Questie",
+      "group": "Квесты и карта",
+      "type": "zip",
+      "version": "9.9.4-335",
+      "scope": "addon",
+      "default": true,
+      "description": "Показывает на карте и миникарте, где взять задание, кого убить или что собрать и куда сдать.",
+      "author": "Aldori15",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/questie-9.9.4-335.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Questie-335"
+      ]
+    },
+    {
+      "id": "addon_mapster",
+      "name": "Mapster",
+      "group": "Квесты и карта",
+      "type": "zip",
+      "version": "1.3.8",
+      "scope": "addon",
+      "default": false,
+      "description": "Делает карту мира удобнее: прозрачность и масштаб окна, координаты, показ неисследованных областей.",
+      "author": "Nevcairiel",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/mapster-1.3.8.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Mapster"
+      ]
+    },
+    {
+      "id": "addon_tomtom",
+      "name": "TomTom",
+      "group": "Квесты и карта",
+      "type": "zip",
+      "version": "v40000-1.0.0",
+      "scope": "addon",
+      "default": false,
+      "description": "Ставит путевые точки по координатам и показывает стрелку-навигатор до цели.",
+      "author": "jnwhiteh",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/tomtom-v40000-1.0.0.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "TomTom"
+      ]
+    },
+    {
+      "id": "addon_gatherer",
+      "name": "Gatherer",
+      "group": "Квесты и карта",
+      "type": "zip",
+      "version": "3.1.16",
+      "scope": "addon",
+      "default": false,
+      "description": "Запоминает, где вы нашли траву, руду и сундуки, и отмечает эти места на карте и миникарте.",
+      "author": "Norganna's AddOns",
+      "license": "GPL-2.0",
+      "archive": {
+        "src": "../dist-forever/addons/gatherer-3.1.16.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Gatherer",
+        "Gatherer_HUD"
+      ]
+    },
+    {
+      "id": "addon_dbm",
+      "name": "Deadly Boss Mods",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "10.1.13_alpha",
+      "scope": "addon",
+      "default": true,
+      "description": "Предупреждает о способностях боссов в подземельях и рейдах: таймеры, сигналы и подсказки, куда отойти.",
+      "author": "Zidras",
+      "license": "CC-BY-NC-SA-3.0",
+      "archive": {
+        "src": "../dist-forever/addons/dbm-10.1.13_alpha.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "DBM-AQ20",
+        "DBM-AQ40",
+        "DBM-Azeroth",
+        "DBM-BWL",
+        "DBM-BlackTemple",
+        "DBM-ChamberOfAspects",
+        "DBM-Coliseum",
+        "DBM-Core",
+        "DBM-EyeOfEternity",
+        "DBM-GUI",
+        "DBM-Gruul",
+        "DBM-Hyjal",
+        "DBM-Icecrown",
+        "DBM-Karazhan",
+        "DBM-MC",
+        "DBM-Magtheridon",
+        "DBM-Naxx",
+        "DBM-Onyxia",
+        "DBM-Outland",
+        "DBM-Party-BC",
+        "DBM-Party-Classic",
+        "DBM-Party-WotLK",
+        "DBM-PvP",
+        "DBM-Serpentshrine",
+        "DBM-SpellTimers",
+        "DBM-StatusBarTimers",
+        "DBM-Sunwell",
+        "DBM-TheEye",
+        "DBM-Ulduar",
+        "DBM-VanillaNaxx",
+        "DBM-VanillaOnyxia",
+        "DBM-VoA",
+        "DBM-WorldEvents",
+        "DBM-ZG",
+        "DBM-ZulAman"
+      ]
+    },
+    {
+      "id": "addon_details",
+      "name": "Details! Damage Meter",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "WotLK",
+      "scope": "addon",
+      "default": false,
+      "description": "Измеритель урона, исцеления и других показателей боя с подробной разбивкой по способностям.",
+      "author": "Tercioo",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/details-WotLK.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Details",
+        "Details_3DModelsPaths",
+        "Details_ChartViewer",
+        "Details_DataStorage",
+        "Details_DeathGraphs",
+        "Details_EncounterDetails",
+        "Details_SunderCount",
+        "Details_TimeLine",
+        "Details_TinyThreat"
+      ]
+    },
+    {
+      "id": "addon_skada",
+      "name": "Skada",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "1.8.87",
+      "scope": "addon",
+      "default": false,
+      "description": "Лёгкий измеритель урона и исцеления; альтернатива Details! и Recount. Делает то же, что Details!, — включайте что-то одно.",
+      "author": "bkader",
+      "license": "MIT",
+      "archive": {
+        "src": "../dist-forever/addons/skada-1.8.87.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Skada"
+      ]
+    },
+    {
+      "id": "addon_recount",
+      "name": "Recount",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "r1123",
+      "scope": "addon",
+      "default": false,
+      "description": "Классический измеритель урона и исцеления с графиками; альтернатива Details! и Skada. Делает то же, что Details!, — включайте что-то одно.",
+      "author": "Cryect, Elsia",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/recount-r1123.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Recount"
+      ]
+    },
+    {
+      "id": "addon_omen",
+      "name": "Omen Threat Meter",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "3.0.9",
+      "scope": "addon",
+      "default": false,
+      "description": "Показывает угрозу (агро) каждого участника группы, чтобы не сорвать моба с танка.",
+      "author": "Xinhuan",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/omen-3.0.9.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Omen"
+      ]
+    },
+    {
+      "id": "addon_gtfo",
+      "name": "GTFO",
+      "group": "Рейды и бои",
+      "type": "zip",
+      "version": "2.5.3",
+      "scope": "addon",
+      "default": false,
+      "description": "Подаёт звуковой сигнал, когда вы стоите в чём-то опасном: огне, яде, лужах.",
+      "author": "Zensunim",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/gtfo-2.5.3.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "GTFO"
+      ]
+    },
+    {
+      "id": "addon_bagnon",
+      "name": "Bagnon",
+      "group": "Удобство",
+      "type": "zip",
+      "version": "2.13.3",
+      "scope": "addon",
+      "default": false,
+      "description": "Объединяет все сумки в одно окно с поиском и сортировкой; показывает банк и сумки других персонажей.",
+      "author": "Tuller",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/bagnon-2.13.3.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Bagnon",
+        "Bagnon_Config",
+        "Bagnon_Forever",
+        "Bagnon_GuildBank",
+        "Bagnon_Tooltips"
+      ]
+    },
+    {
+      "id": "addon_atlasloot",
+      "name": "AtlasLoot Enhanced",
+      "group": "Удобство",
+      "type": "zip",
+      "version": "v5.11.04",
+      "scope": "addon",
+      "default": false,
+      "description": "Справочник добычи: что падает с боссов подземелий и рейдов, награды за репутацию, рецепты и комплекты.",
+      "author": "Hegarol and AtlasLoot Enhanced team",
+      "license": "GPL-2.0",
+      "archive": {
+        "src": "../dist-forever/addons/atlasloot-v5.11.04.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "AtlasLoot",
+        "AtlasLootFu",
+        "AtlasLoot_BurningCrusade",
+        "AtlasLoot_Crafting",
+        "AtlasLoot_OriginalWoW",
+        "AtlasLoot_WorldEvents",
+        "AtlasLoot_WrathoftheLichKing"
+      ]
+    },
+    {
+      "id": "addon_auctionator",
+      "name": "Auctionator",
+      "group": "Удобство",
+      "type": "zip",
+      "version": "2.6.8",
+      "scope": "addon",
+      "default": false,
+      "description": "Упрощает аукцион: быстрый поиск, история цен и выставление лота в один клик по лучшей цене.",
+      "author": "Zirco",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/auctionator-2.6.8.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Auctionator"
+      ]
+    },
+    {
+      "id": "addon_postal",
+      "name": "Postal",
+      "group": "Удобство",
+      "type": "zip",
+      "version": "4.3.0",
+      "scope": "addon",
+      "default": false,
+      "description": "Улучшает почту: забрать всё одним нажатием, адресная книга, быстрая пересылка и возврат писем.",
+      "author": "Xinhuan",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/postal-4.3.0.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Postal"
+      ]
+    },
+    {
+      "id": "addon_leatrixplus",
+      "name": "Leatrix Plus",
+      "group": "Удобство",
+      "type": "zip",
+      "version": "1.8.2",
+      "scope": "addon",
+      "default": false,
+      "description": "Набор удобств в одном окне: автопродажа хлама, автопочинка, ускоренный сбор добычи, отказ от дуэлей и многое другое.",
+      "author": "Leatrix",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/leatrixplus-1.8.2.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Leatrix_Plus"
+      ]
+    },
+    {
+      "id": "addon_weakauras",
+      "name": "WeakAuras",
+      "group": "Интерфейс",
+      "type": "zip",
+      "version": "5.22.0",
+      "scope": "addon",
+      "default": false,
+      "description": "Конструктор индикаторов: показывает баффы, перезарядки и сигналы так, как вы настроите; готовые наборы — на wago.io.",
+      "author": "The WeakAuras Team",
+      "license": "GPL-2.0",
+      "archive": {
+        "src": "../dist-forever/addons/weakauras-5.22.0.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "APIDocumentation",
+        "WeakAuras",
+        "WeakAurasArchive",
+        "WeakAurasModelPaths",
+        "WeakAurasOptions",
+        "WeakAurasStopMotion",
+        "WeakAurasTemplates"
+      ]
+    },
+    {
+      "id": "addon_omnicc",
+      "name": "OmniCC",
+      "group": "Интерфейс",
+      "type": "zip",
+      "version": "3.0.4",
+      "scope": "addon",
+      "default": false,
+      "description": "Пишет оставшееся время перезарядки цифрами прямо на кнопках способностей и предметов.",
+      "author": "Tuller",
+      "license": "MIT",
+      "archive": {
+        "src": "../dist-forever/addons/omnicc-3.0.4.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "OmniCC",
+        "OmniCC_Config"
+      ]
+    },
+    {
+      "id": "addon_elvui",
+      "name": "ElvUI",
+      "group": "Интерфейс",
+      "type": "zip",
+      "version": "6.09",
+      "scope": "addon",
+      "default": false,
+      "description": "Полная замена интерфейса: панели, рамки игроков, сумки, чат и карта в едином стиле. Заменяет панели, сумки и рамки — с Bartender4, Bagnon и Titan Panel не совмещайте.",
+      "author": "Elv, Bunny",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/elvui-6.09.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "ElvUI",
+        "ElvUI_OptionsUI"
+      ]
+    },
+    {
+      "id": "addon_bartender4",
+      "name": "Bartender4",
+      "group": "Интерфейс",
+      "type": "zip",
+      "version": "4.4.2-12-g94f3b58",
+      "scope": "addon",
+      "default": false,
+      "description": "Гибкие панели команд: перемещайте, масштабируйте и скрывайте кнопки как угодно.",
+      "author": "Nevcairiel",
+      "license": "лицензия не указана",
+      "archive": {
+        "src": "../dist-forever/addons/bartender4-4.4.2-12-g94f3b58.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Bartender4"
+      ]
+    },
+    {
+      "id": "addon_titanpanel",
+      "name": "Titan Panel",
+      "group": "Интерфейс",
+      "type": "zip",
+      "version": "4.3.8.30300",
+      "scope": "addon",
+      "default": false,
+      "description": "Полоса вверху экрана с полезными сведениями: золото, координаты, задержка, прочность снаряжения и др.",
+      "author": "Titan Development Team",
+      "license": "своя лицензия автора",
+      "archive": {
+        "src": "../dist-forever/addons/titanpanel-4.3.8.30300.zip"
+      },
+      "target": "Interface/AddOns",
+      "folders": [
+        "Titan",
+        "TitanAmmo",
+        "TitanBag",
+        "TitanClock",
+        "TitanCoords",
+        "TitanGoldTracker",
+        "TitanLootType",
+        "TitanPerformance",
+        "TitanRegen",
+        "TitanRepair",
+        "TitanVolume",
+        "TitanXP"
+      ]
     }
   ],
   "editions": [
@@ -283,10 +865,11 @@
       ]
     },
     {
-      "id": "ultra",
-      "name": "Ультра",
-      "tagline": "Новый свет, максимум деталей и дальности",
+      "id": "forever",
+      "name": "Forever",
+      "tagline": "Современный облик: тени от солнца, новый свет, деревья, небо и эффекты",
       "image": "",
+      "note": "Большое издание: загрузка ≈8 ГБ и первая сборка карты света 10–40 минут, нужно 8 ГБ памяти.",
       "components": [
         "hd_textures",
         "hd_characters",
@@ -297,7 +880,12 @@
         "hd_water",
         "dungeon_maps",
         "gfx_ultra",
-        "reshade"
+        "forever_dungeons",
+        "forever_world",
+        "forever_terrain",
+        "forever_spells",
+        "forever_sky",
+        "northlight"
       ]
     }
   ],
@@ -306,12 +894,6 @@
       "label": "Оригинальная графика 3.3.5a",
       "editions": [
         "classic"
-      ]
-    },
-    {
-      "label": "Новый свет: затенение, туман по глубине, сглаживание (ReShade)",
-      "components": [
-        "reshade"
       ]
     },
     {
@@ -351,6 +933,32 @@
       "label": "Максимальная дальность прорисовки и детализация",
       "components": [
         "gfx_ultra"
+      ]
+    },
+    {
+      "label": "Тени от солнца и персонажей, объёмный свет и туман (Northlight)",
+      "components": [
+        "northlight"
+      ]
+    },
+    {
+      "label": "Современные деревья, растения и здания",
+      "components": [
+        "forever_world"
+      ]
+    },
+    {
+      "label": "Новые текстуры земли, воды и подземелий, эффекты заклинаний",
+      "components": [
+        "forever_terrain",
+        "forever_dungeons",
+        "forever_spells"
+      ]
+    },
+    {
+      "label": "HD-небо и освещение зон",
+      "components": [
+        "forever_sky"
       ]
     }
   ]
