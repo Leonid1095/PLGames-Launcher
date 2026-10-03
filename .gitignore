@@ -9,3 +9,4 @@ plgames_settings.json
 plgames_launcher_settings.json
 .env
 dist-content/
+dist-forever/

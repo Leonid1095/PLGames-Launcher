@@ -128,7 +128,7 @@ class ParseManifestTests(unittest.TestCase):
         self._bad(lambda d: d["components"][3]["files"][0].__setitem__("urls", ["http://x/d3d9.dll"]), "http")
         self._bad(lambda d: d["components"][3]["files"][0].__setitem__("sha256", "abc"), "sha")
         self._bad(lambda d: d["editions"][1]["components"].append("nope"), "unknown")
-        self._bad(lambda d: d.__setitem__("schema", 2), "schema")
+        self._bad(lambda d: d.__setitem__("schema", 99), "schema")
         self._bad(lambda d: d["components"][0]["files"][0].__setitem__("folder", "../.."), "folder")
 
     def test_shared_file_requires_conflict(self):
@@ -400,3 +400,379 @@ class ExecutorTests(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+class _DropAfter(FakeResponse):
+    """Ответ, у которого соединение рвётся после первых `keep` байт."""
+
+    def __init__(self, body, keep, status=200):
+        super().__init__(status=status, body=body)
+        self.keep = keep
+
+    def iter_content(self, chunk):
+        yield self.body[:self.keep]
+        raise ConnectionError("connection reset")
+
+
+class ScriptedSession:
+    """Отдаёт ответы по очереди и запоминает заголовки запросов."""
+
+    def __init__(self, script):
+        self.script, self.calls = script, []
+
+    def get(self, url, headers=None, **kw):
+        self.calls.append((url, dict(headers or {})))
+        queue = self.script.get(url)
+        if not queue:
+            raise ConnectionError("unreachable " + url)
+        resp = queue.pop(0)
+        return resp(headers or {}) if callable(resp) else resp
+
+
+class DownloadResumeTests(unittest.TestCase):
+    """Большие файлы: докачка с места обрыва и кэш скачанного между попытками."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.gd = make_client(self.tmp)
+        self.m = content.parse_manifest(manifest_dict())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_ultra(self, session, cancel=None):
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        ed = next(e for e in self.m.editions if e.id == "ultra")
+        acts = content.plan(self.m, st, state, set(ed.components))
+        return content.Executor(self.m, self.gd, state, session=session, is_running=NOT_RUNNING,
+                                cancel=cancel).run(acts, edition="ultra")
+
+    def read(self, rel):
+        with open(os.path.join(self.gd, rel), "rb") as f:
+            return f.read()
+
+    def test_resumes_after_connection_drop(self):
+        def rest(headers):
+            self.assertEqual(headers.get("Range"), "bytes=5-")
+            return FakeResponse(status=206, body=DLL[5:])
+
+        s = ScriptedSession({BASE + "/dxvk/d3d9.dll": [_DropAfter(DLL, 5), rest],
+                             BASE + "/dxvk/dxvk.conf": [FakeResponse(body=CONF)]})
+        self.run_ultra(s)
+        self.assertEqual(self.read("d3d9.dll"), DLL)
+
+    def test_server_without_range_restarts_file(self):
+        s = ScriptedSession({BASE + "/dxvk/d3d9.dll": [_DropAfter(DLL, 5), FakeResponse(body=DLL)],
+                             BASE + "/dxvk/dxvk.conf": [FakeResponse(body=CONF)]})
+        self.run_ultra(s)
+        self.assertEqual(self.read("d3d9.dll"), DLL)
+
+    def test_finished_downloads_survive_a_failed_run(self):
+        first = ScriptedSession({BASE + "/dxvk/d3d9.dll": [FakeResponse(body=DLL)],
+                                 BASE + "/dxvk/dxvk.conf": [FakeResponse(body=b"tampered")]})
+        with self.assertRaises(content.ApplyError):
+            self.run_ultra(first)
+        second = ScriptedSession({BASE + "/dxvk/dxvk.conf": [FakeResponse(body=CONF)]})
+        self.run_ultra(second)  # d3d9.dll второй раз не качается: в маршрутах его уже нет
+        self.assertEqual(self.read("d3d9.dll"), DLL)
+        self.assertEqual([u for u, _ in second.calls], [BASE + "/dxvk/dxvk.conf"])
+        cache = os.path.join(self.gd, "PLGames", "downloads")
+        self.assertEqual(os.listdir(cache), [])  # всё уехало в клиент
+
+    def test_cancel_keeps_partial_file_for_next_run(self):
+        import threading
+        cancel = threading.Event()
+
+        class CancelMidway(FakeResponse):
+            def iter_content(self, chunk):
+                yield DLL[:7]
+                cancel.set()
+                yield DLL[7:]
+
+        first = ScriptedSession({BASE + "/dxvk/d3d9.dll": [CancelMidway(body=DLL)]})
+        with self.assertRaises(content.ApplyCancelled):
+            self.run_ultra(first, cancel=cancel)
+        second = ScriptedSession({BASE + "/dxvk/d3d9.dll": [lambda h: FakeResponse(status=206, body=DLL[7:])],
+                                  BASE + "/dxvk/dxvk.conf": [FakeResponse(body=CONF)]})
+        self.run_ultra(second)
+        self.assertEqual(self.read("d3d9.dll"), DLL)
+        self.assertEqual(second.calls[0][1].get("Range"), "bytes=7-")
+
+    def test_identical_file_already_in_client_is_not_downloaded(self):
+        with open(os.path.join(self.gd, "d3d9.dll"), "wb") as f:
+            f.write(DLL)
+        s = ScriptedSession({BASE + "/dxvk/dxvk.conf": [FakeResponse(body=CONF)]})
+        self.run_ultra(s)
+        self.assertEqual(self.read("d3d9.dll"), DLL)
+        self.assertNotIn("d3d9.dll", content.load_state(self.gd)["backups"])
+        self.assertEqual([u for u, _ in s.calls], [BASE + "/dxvk/dxvk.conf"])
+
+
+def make_zip(entries):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+ADDON_ZIP = make_zip({"Questie/Questie.toc": b"## Interface: 30300\n", "Questie/Core.lua": b"print(1)",
+                      "Questie/Media/icon.blp": b"BLP2", "Questie/README.png": b"skip me"})
+PKG_ZIP = make_zip({"runtime/python.exe": b"MZ", "app/install.py": b"#"})
+
+
+def ext_manifest(addon_zip=ADDON_ZIP, pkg_zip=PKG_ZIP):
+    d = manifest_dict()
+    d["components"] += [
+        {"id": "addon_questie", "name": "Questie", "group": "Квесты и карта", "type": "zip", "version": "1",
+         "scope": "addon", "description": "Квесты на карте", "author": "Questie team", "license": "GPL-3.0",
+         "archive": {"size": len(addon_zip), "sha256": sha(addon_zip), "urls": [BASE + "/questie.zip"]},
+         "target": "Interface/AddOns", "folders": ["Questie"]},
+        {"id": "northlight", "name": "Northlight", "group": "Свет", "type": "installer", "version": "0.3",
+         "conflicts": ["dxvk"],
+         "archive": {"size": len(pkg_zip), "sha256": sha(pkg_zip), "urls": [BASE + "/nl.zip"]},
+         "install": ["runtime/python.exe", "app/install.py", "--client", "{client}", "--locale", "{locale}"],
+         "uninstall": ["runtime/python.exe", "app/install.py", "uninstall", "--client", "{client}"],
+         "progress": r"^\s*(?P<label>\w+): (?P<pct>\d+)%",
+         "marker": "northlight-renderer.ini"},
+    ]
+    d["editions"].append({"id": "forever", "name": "Forever",
+                          "components": ["hd_textures", "gfx_ultra", "northlight"]})
+    return d
+
+
+def ext_routes():
+    r = good_routes()
+    r[BASE + "/questie.zip"] = FakeResponse(body=ADDON_ZIP)
+    r[BASE + "/nl.zip"] = FakeResponse(body=PKG_ZIP)
+    return r
+
+
+class ExtendedTypesParseTests(unittest.TestCase):
+    def test_parses_zip_and_installer(self):
+        m = content.parse_manifest(ext_manifest())
+        q, n = m.component("addon_questie"), m.component("northlight")
+        self.assertEqual((q.scope, q.target, q.folders), ("addon", "Interface/AddOns", ("Questie",)))
+        self.assertEqual(n.install[0], "runtime/python.exe")
+        self.assertEqual(n.marker, "northlight-renderer.ini")
+
+    def test_rejects_bad_extended_components(self):
+        cases = [
+            lambda c: c[-2].update(folders=["../evil"]),
+            lambda c: c[-2].update(target="C:/Windows"),
+            lambda c: c[-2].update(scope="everything"),
+            lambda c: c[-2]["archive"].update(urls=["http://x/q.zip"]),
+            lambda c: c[-1].update(install=["../../cmd.exe", "/c"]),
+            lambda c: c[-1].update(install=[]),
+            lambda c: c[-1].update(marker="../outside.ini"),
+            lambda c: c[-1].update(progress="(unclosed"),
+        ]
+        for i, breaker in enumerate(cases):
+            d = ext_manifest()
+            breaker(d["components"])
+            with self.assertRaises(content.ManifestError, msg=f"case {i}"):
+                content.parse_manifest(d)
+
+    def test_addon_cannot_be_part_of_edition(self):
+        d = ext_manifest()
+        d["editions"][0]["components"] = ["addon_questie"]
+        with self.assertRaises(content.ManifestError):
+            content.parse_manifest(d)
+
+
+def fallback_manifest():
+    """Forever из ext_manifest, где Northlight без Vulkan 1.3 заменяется на DXVK."""
+    d = ext_manifest()
+    d["components"][-1].update(requires="vulkan13", fallback="dxvk")
+    return d
+
+
+class RequirementFallbackTests(unittest.TestCase):
+    def test_parses_requires_and_fallback(self):
+        n = content.parse_manifest(fallback_manifest()).component("northlight")
+        self.assertEqual((n.requires, n.fallback), ("vulkan13", "dxvk"))
+
+    def test_rejects_bad_requirements(self):
+        cases = [
+            lambda c: c[-1].update(requires="raytracing"),
+            lambda c: c[-1].update(fallback="nope"),
+            lambda c: c[-1].update(fallback="addon_questie"),
+            lambda c: c[-1].pop("requires"),
+            lambda c: c[3].update(requires="vulkan13"),  # у замены не может быть своих требований
+        ]
+        for i, breaker in enumerate(cases):
+            d = fallback_manifest()
+            breaker(d["components"])
+            with self.assertRaises(content.ManifestError, msg=f"case {i}"):
+                content.parse_manifest(d)
+
+    def test_resolve_swaps_component_when_pc_lacks_capability(self):
+        m = content.parse_manifest(fallback_manifest())
+        ids = ("hd_textures", "gfx_ultra", "northlight")
+        self.assertEqual(content.resolve_components(m, ids, {"vulkan13"}), ids)
+        self.assertEqual(content.resolve_components(m, ids, set()), ("hd_textures", "gfx_ultra", "dxvk"))
+        self.assertEqual(content.resolve_components(m, ("dxvk", "northlight"), set()), ("dxvk",))
+
+    def test_edition_with_fallback_in_place_is_still_detected(self):
+        m = content.parse_manifest(fallback_manifest())
+        tmp = tempfile.mkdtemp()
+        try:
+            gd = make_client(tmp)
+            state = content.load_state(gd)
+            st = content.component_status(m, gd, state)
+            target = set(content.resolve_components(m, m.editions[-1].components, set()))
+            content.Executor(m, gd, state, session=FakeSession(ext_routes()), is_running=NOT_RUNNING,
+                             installers_dir=os.path.join(tmp, "inst")).run(
+                content.plan(m, st, state, target), edition="forever")
+            st = content.component_status(m, gd, content.load_state(gd))
+            self.assertTrue(st["dxvk"]["active"])
+            self.assertFalse(st["northlight"]["active"])
+            self.assertEqual(content.detect_edition(m, st), "forever")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class AddonScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.gd = make_client(self.tmp)
+        self.inst = os.path.join(self.tmp, "installers")
+        self.m = content.parse_manifest(ext_manifest())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_plan(self, target, scope="edition", edition=None, session=None):
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        acts = content.plan(self.m, st, state, set(target), scope=scope)
+        ex = content.Executor(self.m, self.gd, state, session=session or FakeSession(ext_routes()),
+                              is_running=NOT_RUNNING, installers_dir=self.inst)
+        return ex.run(acts, edition=edition)
+
+    def addon_dir(self, *parts):
+        return os.path.join(self.gd, "Interface", "AddOns", *parts)
+
+    def test_addon_installs_only_addon_files(self):
+        self.run_plan({"addon_questie"}, scope="addon")
+        with open(self.addon_dir("Questie", "Core.lua"), "rb") as f:
+            self.assertEqual(f.read(), b"print(1)")
+        self.assertTrue(os.path.isfile(self.addon_dir("Questie", "Media", "icon.blp")))
+        self.assertFalse(os.path.exists(self.addon_dir("Questie", "README.png")))
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertTrue(st["addon_questie"]["active"])
+
+    def test_edition_switch_keeps_addons_and_edition_detection_ignores_them(self):
+        self.run_plan({"addon_questie"}, scope="addon")
+        ed = next(e for e in self.m.editions if e.id == "classic")
+        self.run_plan(set(ed.components), edition="classic")
+        self.assertTrue(os.path.isfile(self.addon_dir("Questie", "Core.lua")))
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertEqual(content.detect_edition(self.m, st), "classic")
+
+    def test_addon_removal_deletes_folder(self):
+        self.run_plan({"addon_questie"}, scope="addon")
+        self.run_plan(set(), scope="addon")
+        self.assertFalse(os.path.exists(self.addon_dir("Questie")))
+
+    def test_catalog_addon_installed_by_hand_is_reported_as_foreign(self):
+        os.makedirs(self.addon_dir("Questie"))
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertFalse(st["addon_questie"]["foreign"])  # пустая папка из раздачи клиента — не аддон
+        with open(self.addon_dir("Questie", "Questie.toc"), "w") as f:
+            f.write("## Interface: 30300\n")
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertEqual((st["addon_questie"]["active"], st["addon_questie"]["foreign"]), (False, True))
+        self.run_plan({"addon_questie"}, scope="addon")
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertEqual((st["addon_questie"]["active"], st["addon_questie"]["foreign"]), (True, False))
+        self.assertFalse(st["northlight"]["foreign"])
+
+    def test_players_own_copy_is_kept_aside(self):
+        os.makedirs(self.addon_dir("Questie"))
+        with open(self.addon_dir("Questie", "Old.lua"), "wb") as f:
+            f.write(b"old")
+        self.run_plan({"addon_questie"}, scope="addon")
+        self.assertFalse(os.path.exists(self.addon_dir("Questie", "Old.lua")))
+        kept = os.path.join(self.gd, "PLGames", "backup", "kept")
+        found = [os.path.join(r, n) for r, _, ns in os.walk(kept) for n in ns]
+        self.assertTrue(any(p.endswith(os.path.join("Questie", "Old.lua")) for p in found))
+
+    def test_archive_with_executable_or_escape_is_refused_untouched(self):
+        for bad in ({"Questie/Questie.toc": b"x", "Questie/run.exe": b"MZ"},
+                    {"Questie/Questie.toc": b"x", "Questie/../../evil.lua": b"x"}):
+            z = make_zip(bad)
+            self.m = content.parse_manifest(ext_manifest(addon_zip=z))
+            routes = ext_routes()
+            routes[BASE + "/questie.zip"] = FakeResponse(body=z)
+            with self.assertRaises(content.ApplyError):
+                self.run_plan({"addon_questie"}, scope="addon", session=FakeSession(routes))
+            self.assertFalse(os.path.exists(self.addon_dir("Questie")))
+
+
+class InstallerTypeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.gd = make_client(self.tmp)
+        self.inst = os.path.join(self.tmp, "installers")
+        self.m = content.parse_manifest(ext_manifest())
+        self.calls = []
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def fake_runner(self, fail=False):
+        def run(argv, cwd, on_line):
+            self.calls.append((list(argv), cwd))
+            if "uninstall" in argv:
+                os.remove(os.path.join(self.gd, "northlight-renderer.ini"))
+                return 0
+            on_line("  Northrend: 50% (566/1131 tiles)")
+            if fail:
+                on_line("ERROR: world cache failed")
+                return 1
+            with open(os.path.join(self.gd, "northlight-renderer.ini"), "w") as f:
+                f.write("[Renderer]\n")
+            return 0
+        return run
+
+    def apply(self, edition, runner):
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        ed = next(e for e in self.m.editions if e.id == edition)
+        acts = content.plan(self.m, st, state, set(ed.components))
+        seen = []
+        ex = content.Executor(self.m, self.gd, state, session=FakeSession(ext_routes()), is_running=NOT_RUNNING,
+                              installers_dir=self.inst, progress=lambda **kw: seen.append(kw))
+        with mock.patch.object(content, "_run_process", side_effect=runner):
+            ex.run(acts, edition=edition)
+        return seen
+
+    def test_install_runs_package_command_with_client_and_locale(self):
+        seen = self.apply("forever", self.fake_runner())
+        argv, cwd = self.calls[0]
+        self.assertTrue(argv[0].endswith(os.path.join("runtime", "python.exe")))
+        self.assertTrue(os.path.isfile(argv[0]))
+        self.assertIn(self.gd, argv)
+        self.assertEqual(argv[argv.index("--locale") + 1], "ruRU")
+        self.assertTrue(any("Northrend: 50%" in str(kw.get("text")) for kw in seen))
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertTrue(st["northlight"]["active"])
+        self.assertEqual(content.detect_edition(self.m, st), "forever")
+
+    def test_failed_install_is_reported_and_rolled_back(self):
+        with self.assertRaises(content.ApplyError) as cm:
+            self.apply("forever", self.fake_runner(fail=True))
+        self.assertIn("world cache failed", str(cm.exception))
+        self.assertEqual(gameutils.read_config_wtf(self.gd)["farclip"], "777")
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "PLGames", "state.json")))
+
+    def test_leaving_edition_runs_uninstaller(self):
+        self.apply("forever", self.fake_runner())
+        self.apply("classic", self.fake_runner())
+        self.assertIn("uninstall", self.calls[-1][0])
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "northlight-renderer.ini")))
+        self.assertNotIn("northlight", content.load_state(self.gd)["components"])
