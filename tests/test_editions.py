@@ -7,7 +7,8 @@ import unittest
 
 import editions
 import hardware
-from tests.test_content import FakeSession, good_routes, make_client, manifest_dict
+from tests.test_content import (CONF, DLL, FakeSession, ext_manifest, ext_routes, fallback_manifest, good_routes,
+                                make_client, manifest_dict)
 
 
 class RecommendTests(unittest.TestCase):
@@ -17,7 +18,7 @@ class RecommendTests(unittest.TestCase):
                          "classic")
         self.assertEqual(hardware.recommend_edition([{"name": "Intel(R) UHD Graphics", "vram_mb": 1024},
                                                      {"name": "NVIDIA GeForce RTX 3060", "vram_mb": 4095}]),
-                         "ultra")
+                         "forever")
         self.assertEqual(hardware.recommend_edition([{"name": "NVIDIA GeForce GTX 1050", "vram_mb": 2048}]),
                          "remaster")
 
@@ -27,6 +28,20 @@ class RecommendTests(unittest.TestCase):
         for g in gpus:
             self.assertIn("name", g)
             self.assertIn("vram_mb", g)
+
+    def test_capabilities_from_vulkan_version(self):
+        self.assertEqual(hardware.detect_capabilities(probe=lambda: (1, 3)), frozenset({"vulkan13"}))
+        self.assertEqual(hardware.detect_capabilities(probe=lambda: (1, 4)), frozenset({"vulkan13"}))
+        self.assertEqual(hardware.detect_capabilities(probe=lambda: (1, 2)), frozenset())
+        self.assertEqual(hardware.detect_capabilities(probe=lambda: None), frozenset())
+
+        def broken():
+            raise OSError("no vulkan-1.dll")
+        self.assertEqual(hardware.detect_capabilities(probe=broken), frozenset())
+
+    def test_vulkan_probe_does_not_crash(self):
+        v = hardware.vulkan_version()
+        self.assertTrue(v is None or (isinstance(v, tuple) and len(v) == 2), v)
 
 
 class ServiceTests(unittest.TestCase):
@@ -40,7 +55,7 @@ class ServiceTests(unittest.TestCase):
             ["https://offline/m.json"], os.path.join(self.tmp, "cache.json"), builtin,
             session_factory=lambda: FakeSession(good_routes()),
             gpu_detector=lambda: [{"name": "NVIDIA GeForce RTX 3060", "vram_mb": 4095}],
-            is_running=lambda name: False)
+            caps_detector=lambda: frozenset(), is_running=lambda name: False)
 
     def wait(self):
         end = time.time() + 10
@@ -54,7 +69,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(v["source"], "builtin")
         self.assertEqual(v["active"], "custom")
         self.assertIsNone(v["chosen"])
-        self.assertEqual(v["recommended"], "ultra")
+        self.assertEqual(v["recommended"], "forever")
         self.assertEqual([e["id"] for e in v["editions"]], ["classic", "remaster", "ultra"])
 
     def test_view_without_game(self):
@@ -124,3 +139,124 @@ class ServiceTests(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+class AddonServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.gd = make_client(self.tmp)
+        data = ext_manifest()
+        data["components"][-2]["default"] = True  # Questie ставится новым игрокам сразу
+        builtin = os.path.join(self.tmp, "builtin.json")
+        with open(builtin, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        self.svc = editions.EditionService(
+            ["https://offline/m.json"], os.path.join(self.tmp, "cache.json"), builtin,
+            session_factory=lambda: FakeSession(ext_routes()),
+            gpu_detector=lambda: [], caps_detector=lambda: frozenset(), is_running=lambda name: False,
+            installers_dir=os.path.join(self.tmp, "installers"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def wait(self):
+        end = time.time() + 10
+        while self.svc.busy() and time.time() < end:
+            time.sleep(0.02)
+        return self.svc.status()
+
+    def questie(self):
+        return os.path.join(self.gd, "Interface", "AddOns", "Questie", "Core.lua")
+
+    def test_view_lists_addons_separately_with_download_size(self):
+        v = self.svc.view(self.gd)
+        self.assertEqual([a["id"] for a in v["addons"]], ["addon_questie"])
+        self.assertNotIn("addon_questie", [c["id"] for c in v["components"]])
+        forever = next(e for e in v["editions"] if e["id"] == "forever")
+        self.assertGreater(forever["download"], 0)
+
+    def test_first_edition_installs_default_addons_once(self):
+        ok, _ = self.svc.start_apply(self.gd, edition_id="classic")
+        self.assertTrue(ok)
+        self.assertEqual(self.wait()["state"], "finished")
+        self.assertTrue(os.path.isfile(self.questie()))
+        ok, _ = self.svc.start_apply(self.gd, addon_ids=[])  # игрок выключил аддон
+        self.assertTrue(ok)
+        self.assertEqual(self.wait()["state"], "finished")
+        self.assertFalse(os.path.exists(self.questie()))
+        ok, _ = self.svc.start_apply(self.gd, edition_id="remaster")
+        self.assertTrue(ok)
+        self.assertEqual(self.wait()["state"], "finished")
+        self.assertFalse(os.path.exists(self.questie()))  # второй раз «по умолчанию» не навязывается
+
+    def test_view_lists_server_and_players_own_addons_and_toggles_them(self):
+        bundle = os.path.join(self.tmp, "bundle")
+        os.makedirs(os.path.join(bundle, "PLGames_Events"))
+        with open(os.path.join(bundle, "PLGames_Events", "PLGames_Events.toc"), "w", encoding="utf-8") as f:
+            f.write("## Interface: 30300\n## Title: PLGames |cff5fb4ffEvents|r\n## Notes: Метки событий\n")
+        own = os.path.join(self.gd, "Interface", "AddOns")
+        for folder in ("PLGames_Events", "Questie", "Prat"):
+            os.makedirs(os.path.join(own, folder))
+            with open(os.path.join(own, folder, folder + ".toc"), "w") as f:
+                f.write("## Interface: 30300\n")
+        self.svc._bundled_addons = bundle
+        v = self.svc.view(self.gd)
+        self.assertEqual(v["server_addons"], [{"folder": "PLGames_Events", "title": "PLGames Events",
+                                               "notes": "Метки событий"}])
+        self.assertEqual([a["folder"] for a in v["user_addons"]], ["Prat"])
+        self.assertTrue(next(a for a in v["addons"] if a["id"] == "addon_questie")["foreign"])
+        self.assertEqual(self.svc.set_user_addon(self.gd, "Prat", False), (True, ""))
+        self.assertFalse(self.svc.view(self.gd)["user_addons"][0]["enabled"])
+        self.assertFalse(self.svc.set_user_addon(self.gd, "PLGames_Events", False)[0])
+
+    def test_addons_do_not_change_chosen_edition(self):
+        self.svc.start_apply(self.gd, edition_id="classic")
+        self.wait()
+        self.svc.start_apply(self.gd, addon_ids=["addon_questie"])
+        self.wait()
+        self.assertEqual(self.svc.view(self.gd)["chosen"], "classic")
+
+
+class FallbackServiceTests(unittest.TestCase):
+    """Forever на ПК без Vulkan 1.3: вместо Northlight ставится замена (в тестовом манифесте — DXVK)."""
+
+    def make(self, caps):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.gd = make_client(self.tmp)
+        builtin = os.path.join(self.tmp, "builtin.json")
+        with open(builtin, "w", encoding="utf-8") as f:
+            json.dump(fallback_manifest(), f)
+        return editions.EditionService(
+            ["https://offline/m.json"], os.path.join(self.tmp, "cache.json"), builtin,
+            session_factory=lambda: FakeSession(ext_routes()), gpu_detector=lambda: [],
+            caps_detector=lambda: caps, is_running=lambda name: False,
+            installers_dir=os.path.join(self.tmp, "installers"))
+
+    def wait(self, svc):
+        end = time.time() + 10
+        while svc.busy() and time.time() < end:
+            time.sleep(0.02)
+        return svc.status()
+
+    def test_view_tells_what_replaces_what_and_counts_replacement_download(self):
+        svc = self.make(frozenset())
+        forever = next(e for e in svc.view(self.gd)["editions"] if e["id"] == "forever")
+        self.assertEqual(forever["replaced"], [{"component": "Northlight", "by": "DXVK", "needs": "Vulkan 1.3"}])
+        self.assertEqual(forever["download"], len(DLL) + len(CONF))
+        full = next(e for e in self.make(frozenset({"vulkan13"})).view(self.gd)["editions"] if e["id"] == "forever")
+        self.assertEqual(full["replaced"], [])
+
+    def test_apply_on_pc_without_vulkan_installs_fallback_and_stays_forever(self):
+        svc = self.make(frozenset())
+        self.assertEqual(svc.start_apply(self.gd, edition_id="forever"), (True, ""))
+        self.assertEqual(self.wait(svc)["state"], "finished")
+        v = svc.view(self.gd)
+        self.assertEqual(v["active"], "forever")
+        comps = {c["id"]: c for c in v["components"]}
+        self.assertTrue(comps["dxvk"]["active"])
+        self.assertFalse(comps["northlight"]["active"])
+        self.assertFalse(comps["northlight"]["requires_ok"])
+        self.assertEqual(comps["northlight"]["conflict_active"], ["dxvk"])
+        self.assertGreater(comps["northlight"]["download"], 0)
+        self.assertEqual(comps["dxvk"]["download"], 0)

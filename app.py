@@ -25,7 +25,7 @@ from gameutils import safe_join as _safe_join, read_config_wtf, write_config_wtf
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.4.0"
+LAUNCHER_VERSION = "0.5.0"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
@@ -34,8 +34,8 @@ GITHUB_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/lates
 SETTINGS_FILE = "plgames_settings.json"
 # Манифест графических изданий: сервер → GitHub (резерв) → кэш → встроенный content_default.json.
 CONTENT_MANIFEST_URLS = [
-    f"{API_BASE}/launcher/content/manifest.json",
-    f"https://github.com/{GITHUB_REPO}/releases/download/content-latest/manifest.json",
+    f"{API_BASE}/launcher/content/manifest2.json",
+    f"https://github.com/{GITHUB_REPO}/releases/download/content-latest/manifest2.json",
 ]
 
 PROJECTS = [
@@ -210,6 +210,18 @@ def _bundled(name):
     """Файл, вшитый PyInstaller (_MEIPASS), или лежащий рядом с app.py при запуске из исходников."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
+
+def _content_source():
+    """Откуда брать манифест и файлы изданий: сеть, а для проверки до публикации —
+    локальная сборка (PLGAMES_LOCAL_CONTENT=<папка dist-content>, только запуск из исходников)."""
+    local = os.environ.get("PLGAMES_LOCAL_CONTENT")
+    if local and not getattr(sys, "frozen", False):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+        from build_content_manifest import MANIFEST_NAME, SERVER_BASE
+        from try_content import LocalSession
+        server = os.path.join(os.path.abspath(local), "server")
+        return [SERVER_BASE + MANIFEST_NAME], (lambda: LocalSession(server)), "content-manifest2-local.json"
+    return CONTENT_MANIFEST_URLS, None, "content-manifest2.json"
 
 def _launcher_dir():
     return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
@@ -701,9 +713,10 @@ class Api:
         self._window = None  # с подчёркиванием: pywebview не обходит такие атрибуты при экспорте в JS
         self.projects = fetch_manifest()
         self._extract = client_install.ExtractJob()
-        self._editions = EditionService(CONTENT_MANIFEST_URLS,
-                                        os.path.join(_appdata_dir(), "content-manifest.json"),
-                                        _bundled("content_default.json"))
+        urls, session_factory, cache_name = _content_source()
+        self._editions = EditionService(urls, os.path.join(_appdata_dir(), cache_name),
+                                        _bundled("content_default.json"), session_factory=session_factory,
+                                        bundled_addons_dir=_addons_src_dir())
         self._editions.preload()
 
     def get_projects(self):
@@ -949,6 +962,26 @@ class Api:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             return json.dumps({"ok": False, "msg": "Неверный список компонентов"})
         ok, msg = self._editions.start_apply(self.get_game_path(pid), component_ids=ids)
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def set_addons(self, pid, ids_json):
+        """Каталог аддонов: включить ровно этот набор; издание не меняется."""
+        if not (self._proj(pid) or {}).get("editions"):
+            return json.dumps({"ok": False, "msg": "Для этого проекта аддоны недоступны"})
+        try:
+            ids = json.loads(ids_json)
+        except ValueError:
+            ids = None
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            return json.dumps({"ok": False, "msg": "Неверный список аддонов"})
+        ok, msg = self._editions.start_apply(self.get_game_path(pid), addon_ids=ids)
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def set_user_addon(self, pid, folder, enabled):
+        """Свой аддон игрока (не из каталога): выключить — убрать в PLGames/addons-off, включить — вернуть."""
+        if not (self._proj(pid) or {}).get("editions"):
+            return json.dumps({"ok": False, "msg": "Для этого проекта аддоны недоступны"})
+        ok, msg = self._editions.set_user_addon(self.get_game_path(pid), str(folder), bool(enabled))
         return json.dumps({"ok": ok, "msg": msg})
 
     def get_edition_status(self):
@@ -1983,7 +2016,24 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
 .ed-card{--ed-a:#1e2230;--ed-b:#2c3346;--ed-tone:var(--accent);--ed-glow:var(--accent-glow)}
 .ed-card.ed-theme-classic{--ed-a:#3a2a18;--ed-b:#7a5a33;--ed-tone:#d6a45c;--ed-glow:rgba(214,164,92,0.28)}
 .ed-card.ed-theme-remaster{--ed-a:#0d2740;--ed-b:#1f6aa5;--ed-tone:#4fb3ff;--ed-glow:rgba(79,179,255,0.3)}
-.ed-card.ed-theme-ultra{--ed-a:#2b1640;--ed-b:#8a5a1a;--ed-tone:#ffcc55;--ed-glow:rgba(255,204,85,0.3)}
+.ed-card.ed-theme-forever{--ed-a:#082a2c;--ed-b:#1b6a5c;--ed-tone:#5ff0c8;--ed-glow:rgba(95,240,200,0.3)}
+.ed-card-note{font-size:10.5px;line-height:1.45;color:var(--orange);padding:0 12px}
+.ed-card-size{font-size:10.5px;color:var(--text-dim)}
+/* ===== ADDONS (каталог аддонов) ===== */
+.ad-groups{display:flex;flex-direction:column;gap:18px}
+.ad-group-title{font-size:11px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--text-sec);margin-bottom:8px}
+.ad-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.ad-card{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:10px;background:var(--card);border:1px solid var(--border);transition:border-color .2s}
+.ad-card.on{border-color:rgba(95,240,200,0.45)}
+.ad-card-body{flex:1;min-width:0}
+.ad-name{font-size:13px;font-weight:700;color:#fff;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ad-desc{font-size:11.5px;color:var(--text-sec);line-height:1.45;margin-top:3px}
+.ad-meta{font-size:10px;color:var(--text-dim);margin-top:5px}
+.ad-tag{font-size:9px;font-weight:700;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:rgba(95,240,200,0.14);color:#5ff0c8}
+.ad-tag.builtin{background:rgba(79,179,255,0.14);color:#4fb3ff}
+.ad-tag.warn{background:rgba(255,170,60,0.14);color:var(--orange)}
+.ad-hint{font-size:11px;color:var(--text-dim);margin:-2px 0 8px}
+.ad-actions{display:flex;justify-content:center;gap:12px;align-items:center}
 .ed-table{display:flex;flex-direction:column;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
 .ed-table .ed-row{padding:10px 0;background:var(--card)}
 .ed-table .ed-row:nth-child(even){background:rgba(38,42,54,0.75)}
@@ -2162,6 +2212,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
   <div class="topbar-nav pywebview-no-drag">
     <button class="topbar-nav-btn active" data-page="games" onclick="showPage('games')">ИГРАТЬ</button>
     <button class="topbar-nav-btn" data-page="editions" id="nav-editions" onclick="showPage('editions')" style="display:none">ИЗДАНИЯ</button>
+    <button class="topbar-nav-btn" data-page="addons" id="nav-addons" onclick="showPage('addons')" style="display:none">АДДОНЫ</button>
     <button class="topbar-nav-btn" data-page="news" onclick="showPage('news')">НОВОСТИ</button>
     <button class="topbar-nav-btn" data-page="settings" onclick="showPage('settings')">НАСТРОЙКИ</button>
   </div>
@@ -2301,6 +2352,10 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,-apple-syste
     <!-- EDITIONS PAGE -->
     <div class="page-view" id="view-editions">
       <div class="ed-page" id="editions-content"></div>
+    </div>
+
+    <div class="page-view" id="view-addons">
+      <div class="ed-page" id="addons-content"></div>
     </div>
 
     <!-- SETTINGS FULL PAGE -->
@@ -2537,6 +2592,7 @@ async function selectProject(pid, save=true) {
 
   // Вкладка «Издания» — только у проектов с графическими изданиями (WoW)
   document.getElementById('nav-editions').style.display = activeProject.has_editions ? '' : 'none';
+  document.getElementById('nav-addons').style.display = activeProject.has_editions ? '' : 'none';
   document.getElementById('hero-graphics-label').textContent =
     activeProject.has_editions ? 'Графические издания' : 'Настройки';
   const edBox = document.getElementById('editions-content');
@@ -2567,12 +2623,15 @@ function showPage(page) {
   const newsView = document.getElementById('view-news');
   const settingsView = document.getElementById('view-settings');
   const editionsView = document.getElementById('view-editions');
+  const addonsView = document.getElementById('view-addons');
 
   gameView.className = 'main-view' + (page === 'games' ? '' : ' hidden');
   newsView.className = 'page-view' + (page === 'news' ? ' active fade-in' : '');
   settingsView.className = 'page-view' + (page === 'settings' ? ' active fade-in' : '');
   editionsView.className = 'page-view' + (page === 'editions' ? ' active fade-in' : '');
+  addonsView.className = 'page-view' + (page === 'addons' ? ' active fade-in' : '');
   if (page === 'editions') loadEditions();
+  if (page === 'addons') loadAddons();
 }
 
 function openGraphics() {
@@ -2842,11 +2901,16 @@ async function loadSettings() {
             html += `<div class="setting-row"><span class="setting-label" style="color:var(--text-dim)">${esc(c.name)}</span><span class="setting-info">нет в клиенте</span></div>`;
             return;
           }
-          const note = c.outdated ? 'есть обновление' : (c.type === 'files' && !c.active ? 'скачается' : '');
+          const rival = v.components.find(x => (c.conflict_active || []).includes(x.id));
+          let note = '';
+          if (c.outdated) note = 'есть обновление';
+          else if (!c.active && rival) note = `несовместим с «${shortName(rival.name)}»`;
+          else if (!c.active && c.requires_ok === false) note = 'нужна видеокарта с Vulkan 1.3';
+          else if (!c.active && c.download > 0) note = 'скачается ' + fmtBytes(c.download);
           html += `<div class="setting-row">
             <span class="setting-label">${esc(c.name)}</span>
             <div class="setting-right">
-              ${note ? `<span class="setting-info">${note}</span>` : ''}
+              ${note ? `<span class="setting-info">${esc(note)}</span>` : ''}
               <label class="toggle">
                 <input type="checkbox" ${c.active ? 'checked' : ''} ${busy ? 'disabled' : ''} onchange="toggleComponent('${esc(c.id)}', this.checked)">
                 <span class="slider"></span>
@@ -2894,8 +2958,19 @@ async function loadSettings() {
 
 let edView = null;
 let edPollTimer = null;
-const ED_THEMES = {classic: 'ed-theme-classic', remaster: 'ed-theme-remaster', ultra: 'ed-theme-ultra'};
+const ED_THEMES = {classic: 'ed-theme-classic', remaster: 'ed-theme-remaster', forever: 'ed-theme-forever'};
 const ED_MARKS = ['I', 'II', 'III', 'IV', 'V'];
+
+function fmtBytes(n) {
+  if (!n) return '0';
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1).replace('.', ',') + ' ГБ';
+  if (n >= 1024 ** 2) return Math.max(1, Math.round(n / 1024 ** 2)) + ' МБ';
+  return Math.max(1, Math.round(n / 1024)) + ' КБ';
+}
+
+function shortName(name) {
+  return String(name || '').split(':')[0].trim();
+}
 
 function editionName(id) {
   if (id === 'custom') return 'Своё';
@@ -2943,6 +3018,9 @@ function renderEditions() {
         </div>
         <div class="ed-card-name">${esc(e.name)}</div>
         <div class="ed-card-tag">${esc(e.tagline || '')}</div>
+        ${e.note ? `<div class="ed-card-note">${esc(e.note)}</div>` : ''}
+        ${(e.replaced || []).map(r => `<div class="ed-card-note">Видеокарта без ${esc(r.needs)}: вместо «${esc(r.component)}» будет «${esc(r.by)}».</div>`).join('')}
+        ${(!active && e.download > 0) ? `<div class="ed-card-size">Загрузка ≈ ${fmtBytes(e.download)}</div>` : ''}
         <button class="ed-btn ${active ? 'current' : ''}" ${(active || busy || !v.installed) ? 'disabled' : ''}
           onclick="chooseEdition('${esc(e.id)}')">${active ? 'Активно' : 'Выбрать'}</button>
       </div>`;
@@ -2966,6 +3044,12 @@ function renderEditions() {
 }
 
 async function chooseEdition(id) {
+  const ed = edView && edView.editions.find(x => x.id === id);
+  if (ed && ed.download > 500 * 1024 ** 2) {
+    const msg = `Издание «${ed.name}» скачает ≈ ${fmtBytes(ed.download)}.` + (ed.note ? '\n' + ed.note : '') +
+      '\n\nЗагрузку можно прервать — скачанное сохранится и продолжится в следующий раз. Продолжить?';
+    if (!confirm(msg)) return;
+  }
   document.querySelectorAll('.ed-btn').forEach(b => { b.disabled = true; });
   let res;
   try { res = JSON.parse(await pywebview.api.apply_edition(activeProject.id, id)); }
@@ -2994,19 +3078,142 @@ async function pollEditionStatus() {
   let s = null;
   try { s = JSON.parse(await pywebview.api.get_edition_status()); } catch(e) {}
   if (s && s.state === 'running') {
-    const fill = document.getElementById('ed-progress-fill');
-    const text = document.getElementById('ed-progress-text');
-    const wrap = document.getElementById('ed-progress');
-    if (wrap) wrap.classList.add('active');
-    if (fill) fill.style.width = (s.progress || 0) + '%';
-    if (text) text.textContent = s.text || 'Применение…';
+    ['ed', 'ad'].forEach(p => {
+      const fill = document.getElementById(p + '-progress-fill');
+      const text = document.getElementById(p + '-progress-text');
+      const wrap = document.getElementById(p + '-progress');
+      if (wrap) wrap.classList.add('active');
+      if (fill) fill.style.width = (s.progress || 0) + '%';
+      if (text) text.textContent = s.text || 'Применение…';
+    });
     edPollTimer = setTimeout(pollEditionStatus, 400);
     return;
   }
-  if (s && s.state === 'error') alert(s.error || 'Не удалось применить издание');
+  if (s && s.state === 'error') alert(s.error || 'Не удалось применить изменения');
   if (currentPage === 'editions') await loadEditions();
+  if (currentPage === 'addons') await loadAddons();
   if (currentPage === 'settings') loadSettings();
   loadGameView();
+}
+
+// ==================== ADDONS ====================
+
+let adPending = null;  // Set id, которые игрок отметил, но ещё не применил
+
+async function loadAddons() {
+  const box = document.getElementById('addons-content');
+  if (!box.dataset.loaded) box.innerHTML = '<div class="ed-loading">Загрузка аддонов…</div>';
+  let v;
+  try { v = JSON.parse(await pywebview.api.get_editions(activeProject.id)); }
+  catch(e) { v = {ok: false, msg: 'Не удалось загрузить аддоны'}; }
+  if (!v.ok) {
+    box.innerHTML = `<div class="ed-empty">${esc(v.msg || 'Аддоны недоступны')}</div>`;
+    return;
+  }
+  edView = v;
+  box.dataset.loaded = '1';
+  adPending = new Set(v.addons.filter(a => a.active).map(a => a.id));
+  renderAddons();
+  if (v.job && v.job.state === 'running' && !edPollTimer) pollEditionStatus();
+}
+
+function addonsChanged() {
+  if (!edView || !adPending) return false;
+  const now = new Set(edView.addons.filter(a => a.active).map(a => a.id));
+  return now.size !== adPending.size || [...adPending].some(id => !now.has(id));
+}
+
+function renderAddons() {
+  const v = edView;
+  const box = document.getElementById('addons-content');
+  const busy = v.job && v.job.state === 'running';
+  let h = `<div class="ed-head">
+      <div class="ed-kicker">Аддоны</div>
+      <div class="ed-title">Полезное для игры</div>
+      <div class="ed-sub">Отметьте нужные и нажмите «Применить». Настройки аддонов хранятся в игре и при выключении не теряются.</div>
+    </div>`;
+  if (!v.installed) h += '<div class="ed-note">Сначала установите игру.</div>';
+  const groups = {};
+  v.addons.forEach(a => { (groups[a.group] = groups[a.group] || []).push(a); });
+  h += '<div class="ad-groups"><div><div class="ad-group-title">Наш сервер</div><div class="ad-list">';
+  (v.server_addons || []).forEach(a => {
+    h += `<div class="ad-card on"><div class="ad-card-body"><div class="ad-name">${esc(a.title)} <span class="ad-tag builtin">встроенный · всегда включён</span></div>
+      <div class="ad-desc">${esc(a.notes || '')}</div><div class="ad-meta">PLGames</div></div></div>`;
+  });
+  h += '</div></div>';
+  Object.keys(groups).forEach(g => {
+    h += `<div><div class="ad-group-title">${esc(g)}</div><div class="ad-list">`;
+    groups[g].forEach(a => {
+      const on = adPending.has(a.id);
+      const meta = [a.author, a.license, a.size ? fmtBytes(a.size) : ''].filter(Boolean).map(esc).join(' · ');
+      const own = a.foreign && !a.active
+        ? `<span class="ad-tag warn" title="Папка аддона уже есть в игре. Если включить — поставим нашу проверенную версию, вашу сохраним в PLGames\\backup">стоит ваша версия</span>` : '';
+      h += `<div class="ad-card ${on ? 'on' : ''}">
+          <label class="toggle"><input type="checkbox" ${on ? 'checked' : ''} ${(busy || !v.installed) ? 'disabled' : ''}
+            onchange="toggleAddonPending('${esc(a.id)}', this.checked)"><span class="slider"></span></label>
+          <div class="ad-card-body">
+            <div class="ad-name">${esc(a.name)} ${a.default ? '<span class="ad-tag">рекомендуем</span>' : ''} ${own}</div>
+            <div class="ad-desc">${esc(a.description || '')}</div>
+            <div class="ad-meta">${meta}</div>
+          </div></div>`;
+    });
+    h += '</div></div>';
+  });
+  if ((v.user_addons || []).length) {
+    h += `<div><div class="ad-group-title">Установлены вами</div>
+      <div class="ad-hint">Переключатель срабатывает сразу: выключенный аддон переносится в PLGames\\addons-off и возвращается обратно целиком. Действует со следующего входа в игру.</div><div class="ad-list">`;
+    v.user_addons.forEach(a => {
+      const warn = [];
+      if (!a.loads) warn.push(`игра его не загрузит: в папке ${a.folder} нет файла ${a.folder}.toc`);
+      if (a.compatible === false) warn.push(`сделан для другой версии игры (${a.interface}), может не работать`);
+      const meta = [a.version ? 'версия ' + a.version : '', a.folders.length > 1 ? `папок: ${a.folders.length}` : ''].filter(Boolean).map(esc).join(' · ');
+      h += `<div class="ad-card ${a.enabled ? 'on' : ''}">
+          <label class="toggle"><input type="checkbox" ${a.enabled ? 'checked' : ''} ${(busy || !v.installed) ? 'disabled' : ''}
+            onchange="toggleUserAddon('${esc(a.folder)}', this.checked)"><span class="slider"></span></label>
+          <div class="ad-card-body">
+            <div class="ad-name">${esc(a.title)} ${warn.length ? '<span class="ad-tag warn">проверьте</span>' : ''}</div>
+            <div class="ad-desc">${esc(warn.join('; ') || a.notes || '')}</div>
+            <div class="ad-meta">${meta}</div>
+          </div></div>`;
+    });
+    h += '</div></div>';
+  }
+  h += '</div>';
+  h += `<div class="ad-actions"><button class="ed-btn" id="ad-apply" ${(busy || !v.installed || !addonsChanged()) ? 'disabled' : ''}
+      onclick="applyAddons()">Применить</button></div>`;
+  h += `<div class="ed-progress ${busy ? 'active' : ''}" id="ad-progress">
+      <div class="ed-progress-track"><div class="ed-progress-fill" id="ad-progress-fill" style="width:${busy ? (v.job.progress || 0) : 0}%"></div></div>
+      <div class="ed-progress-text" id="ad-progress-text">${busy ? esc(v.job.text || '') : ''}</div>
+    </div>`;
+  box.innerHTML = h;
+}
+
+async function toggleUserAddon(folder, on) {
+  document.querySelectorAll('#addons-content input').forEach(el => { el.disabled = true; });
+  let res;
+  try { res = JSON.parse(await pywebview.api.set_user_addon(activeProject.id, folder, on)); }
+  catch(e) { res = {ok: false, msg: 'Ошибка вызова'}; }
+  if (!res.ok) alert(res.msg || 'Не удалось переключить аддон');
+  const pending = adPending;
+  await loadAddons();
+  if (pending) { adPending = pending; renderAddons(); }  // неприменённые отметки каталога не теряются
+}
+
+function toggleAddonPending(id, on) {
+  if (!adPending) return;
+  if (on) adPending.add(id); else adPending.delete(id);
+  renderAddons();
+}
+
+async function applyAddons() {
+  document.querySelectorAll('#addons-content input, #ad-apply').forEach(el => { el.disabled = true; });
+  let res;
+  try { res = JSON.parse(await pywebview.api.set_addons(activeProject.id, JSON.stringify([...adPending]))); }
+  catch(e) { res = {ok: false, msg: 'Ошибка вызова'}; }
+  if (!res.ok) { alert(res.msg || 'Не удалось применить'); loadAddons(); return; }
+  edView.job = {state: 'running', progress: 0, text: 'Подготовка…'};
+  renderAddons();
+  pollEditionStatus();
 }
 
 async function saveGfx() {

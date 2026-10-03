@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: PLGames |cff5fb4ffСобытия на карте|r
+## Notes: Метки событий сервера на карте мира и миникарте: мировые боссы, события зон, караваны, цепочки, стройки.
+## Author: PLGames (Realm Chronos)
+## Version: 1.0
+## SavedVariables: PLGames_EventsDB
+
+MapAreas.lua
+Core.lua
+Map.lua
+Minimap.lua
+List.lua

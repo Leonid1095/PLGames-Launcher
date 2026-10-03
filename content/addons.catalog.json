@@ -1,0 +1,1435 @@
+[
+  {
+    "slug": "questie",
+    "name": "Questie",
+    "group": "quests",
+    "description_ru": "Показывает на карте и миникарте, где взять задание, кого убить или что собрать и куда сдать.",
+    "default_enabled": true,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "9.9.4-335",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/Aldori15/Questie-335",
+      "ref": "3971ff29931eaedcae755013e431dcfa304549f3",
+      "ref_date": "2026-10-02",
+      "url": "https://codeload.github.com/Aldori15/Questie-335/zip/3971ff29931eaedcae755013e431dcfa304549f3"
+    },
+    "license": "none stated (no LICENSE in repo; bundled Ace3 = BSD-3-Clause, some icons MIT from pfQuest)",
+    "authors": "Aldori15 (3.3.5a port, active), widxwer (earlier port, archived), Questie team (original)",
+    "package": {
+      "sha256": "63b4459d12d8d9a5f6fcebde904e1e7636189d92f1e78d66579db87392af4745",
+      "size": 33780965,
+      "uncompressed_size": 129212715,
+      "file_count": 565,
+      "strip_prefix": "Questie-3971ff29931eaedcae755013e431dcfa304549f3/",
+      "rename_root_to": "Questie-335",
+      "addon_folders": [
+        "Questie-335"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [
+        "tools/",
+        ".github/"
+      ],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Questie-335": "9.9.4-335"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "QuestieConfig",
+      "QuestieConfigCharacter",
+      "QuestieProfilerEnabled"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Другие квест-хелперы (QuestHelper, Carbonite, pfQuest) — не включать вместе."
+    ],
+    "notes": "Папка ОБЯЗАНА называться Questie-335 (иначе грузится заглушка Questie.toc с Interface 00000 'install folder problem'). База собрана из данных AzerothCore — совпадает с нашим ядром, но кастомные квесты/NPC сервера Questie не знает. Тяжёлый (33.8 MB zip, ~100+ MB RAM в клиенте) — желателен Large Address Aware патч клиента. В корне репо лежат dev-скрипты tools/*.py и .github/ — не распаковывать (exclude_paths). Умеет ставить точки в TomTom.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [
+        "14 non-addon script files (*.py) in package -> excluded via exclude_paths"
+      ],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "mapster",
+    "name": "Mapster",
+    "group": "quests",
+    "description_ru": "Делает карту мира удобнее: прозрачность и масштаб окна, координаты, показ неисследованных областей.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "1.3.8",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/Mapster/",
+      "take_folders": [
+        "Mapster"
+      ],
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated (TOC X-License: All rights reserved)",
+    "authors": "Nevcairiel",
+    "package": {
+      "sha256": "06bb1c3fd1b253bdcb25fc5c88094a40d8d3f799f804aa45908c8ab73c1dc89f",
+      "size": 209262,
+      "uncompressed_size": 660025,
+      "file_count": 86,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Mapster"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Mapster": "1.3.8"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "MapsterDB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "ElvUI меняет карту/миникарту частично; Leatrix Plus имеет свои опции карты — включать что-то одно."
+    ],
+    "notes": "Финальная версия эпохи 3.3.5 (Curse package 1.3.8).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "tomtom",
+    "name": "TomTom",
+    "group": "quests",
+    "description_ru": "Ставит путевые точки по координатам и показывает стрелку-навигатор до цели.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "v40000-1.0.0 (code = Curse r240-release; Interface lowered to 30300 by ChromieCraft)",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/UnePomme/ChromieRepo",
+      "ref": "9bd5661525f9a9383bfe63cc41eabade394fc8a9",
+      "ref_date": "2024-06-01",
+      "url": "https://codeload.github.com/UnePomme/ChromieRepo/zip/9bd5661525f9a9383bfe63cc41eabade394fc8a9",
+      "path_in_source": "ChromieRepo-9bd5661525f9a9383bfe63cc41eabade394fc8a9/3.3.5a Addons/1. Working Addons/TomTom/",
+      "take_folders": [
+        "TomTom"
+      ],
+      "source_zip_sha256": "5bede26af8c58ee6a1eba9afdbf00cdf019d28bc256b6bed6bebf761aae955c0",
+      "source_zip_size": 103495675,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated (Astrolabe lib LGPL-2.1)",
+    "authors": "jnwhiteh (Cladhaire)",
+    "package": {
+      "sha256": "021274267be220c2c6a0f4aba6189d10a0fa099408f21411ffbf045c9349dbf1",
+      "size": 371073,
+      "uncompressed_size": 1329206,
+      "file_count": 69,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "TomTom"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "TomTom": "v40000-1.0.0"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "TomTomDB",
+      "TomTomWaypoints"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [],
+    "notes": "Нет отдельного GitHub-репо TomTom для 3.3.5a. Взят из ChromieRepo (подборка для ChromieCraft на AzerothCore). Отвергнут sirus-addons/TomTom: его коммит 4d6b0b3 вызывает hooksecurefunc(\"QuestObjectiveTrackerPOI_OnClick\") — функции нет в стоковом клиенте → ошибка Lua. TomTom.lua побайтно совпадает с вариантами r240 из других источников (по git blob sha).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "gatherer",
+    "name": "Gatherer",
+    "group": "quests",
+    "description_ru": "Запоминает, где вы нашли траву, руду и сундуки, и отмечает эти места на карте и миникарте.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "3.1.16 (rev 885, 2010-10-12)",
+    "source": {
+      "type": "github_release_asset",
+      "repo": "https://github.com/locus313/WoW-3.3.5a-Addons",
+      "ref": "addons-2026-09-27-2a7eed8",
+      "ref_date": "2026-09-27",
+      "url": "https://github.com/locus313/WoW-3.3.5a-Addons/releases/download/addons-2026-09-27-2a7eed8/Gatherer-3.1.16.zip",
+      "immutability": "tag+asset name; owner could replace the asset -> trust sha256, host our own copy"
+    },
+    "license": "GPL-2.0 (Gatherer/gpl.txt; Icons/ not GPL; Astrolabe/Configator/Swag LGPL-2.1)",
+    "authors": "Norganna's AddOns (Norganna, Esamynn)",
+    "package": {
+      "sha256": "3380051e754a3cd573ac25611592e48b0693df0d94db89d62085fe8a05581252",
+      "size": 524826,
+      "uncompressed_size": 1359442,
+      "file_count": 174,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Gatherer",
+        "Gatherer_HUD"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Gatherer": "3.1.16",
+      "Gatherer_HUD": "3.1.16"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "GatherDrops",
+      "GatherItems",
+      "Gatherer_DropRates",
+      "Gatherer_SavedSettings_AccountWide",
+      "Gatherer_SavedSettings_PerCharacter",
+      "Gatherer_SharingBlacklist",
+      "LibSwagData"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "GatherMate (не в каталоге) — дубль."
+    ],
+    "notes": "Выбран 3.1.16 (Interface 30300) вместо 3.1.14 из TrinityCore-подборки (Interface 30200 → требовал бы 'Загружать устаревшие'). Источник — сборочный репо locus313 (не авторский; создан 2026-03, 10★). Опциональные !Swatter/SlideBar не включены (OptionalDeps). Названия узлов есть на ruRU (GatherNodes.lua) — работает на русском клиенте.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "dbm",
+    "name": "Deadly Boss Mods",
+    "group": "raids",
+    "description_ru": "Предупреждает о способностях боссов в подземельях и рейдах: таймеры, сигналы и подсказки, куда отойти.",
+    "default_enabled": true,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "10.1.13_alpha (main @ 6165654, 2026-08-16; last GitHub release 10.1.12 from 2024-07-20)",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/Zidras/DBM-Warmane",
+      "ref": "6165654fb413f4166b1c142809ae287b1227ba6a",
+      "ref_date": "2026-08-16",
+      "url": "https://codeload.github.com/Zidras/DBM-Warmane/zip/6165654fb413f4166b1c142809ae287b1227ba6a"
+    },
+    "license": "CC-BY-NC-SA-3.0 (DBM-Core/license.txt)",
+    "authors": "Zidras (DBM-Warmane), Bunny67, Barsoom, DBM-Frostmourne contributors, original DBM team (Tandanu, Nitram, MysticalOS, QartemisT)",
+    "package": {
+      "sha256": "a2d5ef513f48e98b9e3d8ad6465664f4f9d3c11206abd601011708faeb86fb37",
+      "size": 22430993,
+      "uncompressed_size": 30747246,
+      "file_count": 1508,
+      "strip_prefix": "DBM-Warmane-6165654fb413f4166b1c142809ae287b1227ba6a/",
+      "rename_root_to": null,
+      "addon_folders": [
+        "DBM-AQ20",
+        "DBM-AQ40",
+        "DBM-Azeroth",
+        "DBM-BWL",
+        "DBM-BlackTemple",
+        "DBM-ChamberOfAspects",
+        "DBM-Coliseum",
+        "DBM-Core",
+        "DBM-EyeOfEternity",
+        "DBM-GUI",
+        "DBM-Gruul",
+        "DBM-Hyjal",
+        "DBM-Icecrown",
+        "DBM-Karazhan",
+        "DBM-MC",
+        "DBM-Magtheridon",
+        "DBM-Naxx",
+        "DBM-Onyxia",
+        "DBM-Outland",
+        "DBM-Party-BC",
+        "DBM-Party-Classic",
+        "DBM-Party-WotLK",
+        "DBM-PvP",
+        "DBM-Serpentshrine",
+        "DBM-SpellTimers",
+        "DBM-StatusBarTimers",
+        "DBM-Sunwell",
+        "DBM-TheEye",
+        "DBM-Ulduar",
+        "DBM-VanillaNaxx",
+        "DBM-VanillaOnyxia",
+        "DBM-VoA",
+        "DBM-WorldEvents",
+        "DBM-ZG",
+        "DBM-ZulAman"
+      ],
+      "exclude_folders": [
+        "DBM-VPVEM"
+      ],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "DBM-Core": "10.1.13_alpha",
+      "DBM-GUI": "10.1.13_alpha",
+      "DBM-StatusBarTimers": "10.1.13_alpha"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "DBMAQ20_AllSavedVars",
+      "DBMAQ20_SavedStats",
+      "DBMAQ40_AllSavedVars",
+      "DBMAQ40_SavedStats",
+      "DBMAzeroth_AllSavedVars",
+      "DBMAzeroth_SavedStats",
+      "DBMBWL_AllSavedVars",
+      "DBMBWL_SavedStats",
+      "DBMBlackTemple_AllSavedVars",
+      "DBMBlackTemple_SavedStats",
+      "DBMChamberOfAspects_AllSavedVars",
+      "DBMChamberOfAspects_SavedStats",
+      "DBMColiseum_AllSavedVars",
+      "DBMColiseum_SavedStats",
+      "DBMEyeOfEternity_AllSavedVars",
+      "DBMEyeOfEternity_SavedStats",
+      "DBMGruul_AllSavedVars",
+      "DBMGruul_SavedStats",
+      "DBMHyjal_AllSavedVars",
+      "DBMHyjal_SavedStats",
+      "DBMIcecrown_AllSavedVars",
+      "DBMIcecrown_SavedStats",
+      "DBMKarazhan_AllSavedVars",
+      "DBMKarazhan_SavedStats",
+      "DBMMC_AllSavedVars",
+      "DBMMC_SavedStats",
+      "DBMMagtheridon_AllSavedVars",
+      "DBMMagtheridon_SavedStats",
+      "DBMNaxx_AllSavedVars",
+      "DBMNaxx_SavedStats",
+      "DBMOnyxia_AllSavedVars",
+      "DBMOnyxia_SavedStats",
+      "DBMOutland_AllSavedVars",
+      "DBMOutland_SavedStats",
+      "DBMPartyBC_AllSavedVars",
+      "DBMPartyBC_SavedStats",
+      "DBMPartyClassic_AllSavedVars",
+      "DBMPartyClassic_SavedStats",
+      "DBMPartyWotLK_AllSavedVars",
+      "DBMPartyWotLK_SavedStats",
+      "DBMPvP_AllSavedVars",
+      "DBMSerpentshrine_AllSavedVars",
+      "DBMSerpentshrine_SavedStats",
+      "DBMSunwell_AllSavedVars",
+      "DBMSunwell_SavedStats",
+      "DBMTheEye_AllSavedVars",
+      "DBMTheEye_SavedStats",
+      "DBMUlduar_AllSavedVars",
+      "DBMUlduar_SavedStats",
+      "DBMVanillaNaxx_AllSavedVars",
+      "DBMVanillaNaxx_SavedStats",
+      "DBMVanillaOnyxia_AllSavedVars",
+      "DBMVanillaOnyxia_SavedStats",
+      "DBMVoA_AllSavedVars",
+      "DBMVoA_SavedStats",
+      "DBMWorldEvents_AllSavedVars",
+      "DBMWorldEvents_SavedStats",
+      "DBMZG_AllSavedVars",
+      "DBMZG_SavedStats",
+      "DBMZulAman_AllSavedVars",
+      "DBMZulAman_SavedStats",
+      "DBM_AllSavedOptions",
+      "DBM_CharSavedRevision",
+      "DBM_MinimapIcon",
+      "DBM_SavedOptions",
+      "DBM_SpellTimers_Settings",
+      "DBM_UseDualProfile",
+      "DBM_UsedProfile",
+      "DBT_AllPersistentOptions"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "BigWigs/LittleWigs (не в каталоге) — дубль."
+    ],
+    "notes": "Форк, который ведёт Zidras для Warmane; релизы на GitHub отстают на 2 года, поэтому закреплён коммит main. DBM-VPVEM (голосовой пакет, 'All Rights Reserved') исключён. Лицензия NonCommercial: раздавать бесплатно с атрибуцией можно, продавать — нет. Тайминги заточены под скрипты Warmane; на AzerothCore отдельные таймеры могут расходиться (UNVERIFIED).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [
+        "TOC/XML reference files absent from package (judged harmless, see notes): {\"DBM-Party-WotLK\": [\"DBM-Party-WotLK/--Trial of champion will be only zone that uses localized text when areaid is working (since it shares same map with trial of crusader and we don't want to load party mods in the raid and vica versa)\"]}"
+      ],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "details",
+    "name": "Details! Damage Meter",
+    "group": "raids",
+    "description_ru": "Измеритель урона, исцеления и других показателей боя с подробной разбивкой по способностям.",
+    "default_enabled": false,
+    "alternative_group": "damage_meter",
+    "is_alternative": false,
+    "version": "WotLK backport @ 97e1cac (2021-04-12)",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/Bunny67/Details-WotLK",
+      "ref": "97e1cac2e4b5f68a3572f2f4872c9422759a1bca",
+      "ref_date": "2021-04-12",
+      "url": "https://codeload.github.com/Bunny67/Details-WotLK/zip/97e1cac2e4b5f68a3572f2f4872c9422759a1bca"
+    },
+    "license": "none stated (plugins Details_DeathGraphs/Details_TimeLine ship GPL-3.0 LICENSE)",
+    "authors": "Tercioo (original), Bunny67 (WotLK 3.3.5a backport)",
+    "package": {
+      "sha256": "ecec8aa9188aeb629db6b065b2916d5b050c885d25fb36d817f323af47941a8f",
+      "size": 5530399,
+      "uncompressed_size": 26298370,
+      "file_count": 471,
+      "strip_prefix": "Details-WotLK-97e1cac2e4b5f68a3572f2f4872c9422759a1bca/",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Details",
+        "Details_3DModelsPaths",
+        "Details_ChartViewer",
+        "Details_DataStorage",
+        "Details_DeathGraphs",
+        "Details_EncounterDetails",
+        "Details_SunderCount",
+        "Details_TimeLine",
+        "Details_TinyThreat"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {},
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "DeathGraphsDBCurrent",
+      "DeathGraphsDBDeaths",
+      "DeathGraphsDBEndurance",
+      "DeathGraphsDBGraph",
+      "DetailsDataStorage",
+      "DetailsTimeLineDB",
+      "EncounterDetailsDB",
+      "_detalhes_database",
+      "_detalhes_global"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Skada и Recount — тот же функционал, держать включённым один измеритель."
+    ],
+    "notes": "Основной вариант измерителя. Репо не обновлялось с 2021, но это стандартный бэкпорт для 3.3.5a. Есть Details_TinyThreat (угроза) — пересекается с Omen.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "skada",
+    "name": "Skada",
+    "group": "raids",
+    "description_ru": "Лёгкий измеритель урона и исцеления; альтернатива Details! и Recount.",
+    "default_enabled": false,
+    "alternative_group": "damage_meter",
+    "is_alternative": true,
+    "version": "1.8.87",
+    "source": {
+      "type": "github_release_asset",
+      "repo": "https://github.com/bkader/Skada-WoTLK",
+      "ref": "1.8.87",
+      "ref_date": "2024-03-23",
+      "url": "https://github.com/bkader/Skada-WoTLK/releases/download/1.8.87/Skada-WotLK-1.8.87.zip",
+      "immutability": "tag+asset name; owner could replace the asset -> trust sha256, host our own copy"
+    },
+    "license": "MIT",
+    "authors": "bkader (Kader); original Skada by Zarnivoop",
+    "package": {
+      "sha256": "9bfdc4b0f0d01c84128c5763cd61cbf0552563c55ababac43e6a1c6df2c7cf17",
+      "size": 958465,
+      "uncompressed_size": 3350035,
+      "file_count": 172,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Skada"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Skada": "1.8.87"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "SkadaCharDB",
+      "SkadaDB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Details! и Recount — дубль функционала."
+    ],
+    "notes": "Альтернатива Details!. Есть форк NeticSoul/Skada-WotLK-Netic (на базе 1.8.88) — не брали.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "recount",
+    "name": "Recount",
+    "group": "raids",
+    "description_ru": "Классический измеритель урона и исцеления с графиками; альтернатива Details! и Skada.",
+    "default_enabled": false,
+    "alternative_group": "damage_meter",
+    "is_alternative": true,
+    "version": "r1123 (Curse package)",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/Recount/",
+      "take_folders": [
+        "Recount"
+      ],
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated",
+    "authors": "Cryect, Elsia",
+    "package": {
+      "sha256": "d6c5d3d62067e81b551690b57f3db5b2f7c133f32f292f077f74efc2d5181392",
+      "size": 374085,
+      "uncompressed_size": 1433740,
+      "file_count": 144,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Recount"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {},
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "RecountDB",
+      "RecountPerCharDB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Details! и Skada — дубль функционала."
+    ],
+    "notes": "Альтернатива Details!. Самый тяжёлый по памяти из трёх (UNVERIFIED для 3.3.5a).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "omen",
+    "name": "Omen Threat Meter",
+    "group": "raids",
+    "description_ru": "Показывает угрозу (агро) каждого участника группы, чтобы не сорвать моба с танка.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "3.0.9",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/Omen/",
+      "take_folders": [
+        "Omen"
+      ],
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated",
+    "authors": "Xinhuan",
+    "package": {
+      "sha256": "321f95c4e46a6e1279a32fc80b89a9950a4d53e70aade5bbea7456c0681393bc",
+      "size": 256471,
+      "uncompressed_size": 775404,
+      "file_count": 79,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Omen"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Omen": "3.0.9"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "Omen3DB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Details_TinyThreat и модуль угрозы ElvUI показывают то же самое."
+    ],
+    "notes": "Финальная версия Omen3 для WotLK.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "gtfo",
+    "name": "GTFO",
+    "group": "raids",
+    "description_ru": "Подаёт звуковой сигнал, когда вы стоите в чём-то опасном: огне, яде, лужах.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "2.5.3",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/GTFO/",
+      "take_folders": [
+        "GTFO"
+      ],
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated",
+    "authors": "Zensunim",
+    "package": {
+      "sha256": "018574b5a904c5a6f5f7cbc6a553dd08bbc555b92576364e951898bed1c2e050",
+      "size": 309502,
+      "uncompressed_size": 446635,
+      "file_count": 39,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "GTFO"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "GTFO": "2.5.3"
+    },
+    "has_ruRU": "no",
+    "saved_variables": [
+      "GTFOData"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [],
+    "notes": "Последний релиз эпохи 3.3.5 (X-Compatible-With 40000). TOC ссылается на GTFO_Custom.lua — это необязательный файл пользователя, его отсутствие нормально. Интерфейс только на английском, но работает по ID заклинаний, поэтому и на русском клиенте. Альтернатива KarazhanSucks/GTFO_335_Extended (бэкпорт 5.0.5, 0★) не взята.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [
+        "TOC/XML reference files absent from package (judged harmless, see notes): {\"GTFO\": [\"GTFO/GTFO_Custom.lua\"]}"
+      ],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "bagnon",
+    "name": "Bagnon",
+    "group": "convenience",
+    "description_ru": "Объединяет все сумки в одно окно с поиском и сортировкой; показывает банк и сумки других персонажей.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "2.13.3 + search/sort backport @ 27a08f8 (2023-10-18)",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/RichSteini/Bagnon-3.3.5",
+      "ref": "27a08f89819311d772e7ec7a71a41eafb813f122",
+      "ref_date": "2023-10-18",
+      "url": "https://codeload.github.com/RichSteini/Bagnon-3.3.5/zip/27a08f89819311d772e7ec7a71a41eafb813f122"
+    },
+    "license": "none stated",
+    "authors": "Tuller (original), RichSteini (3.3.5 backport of search/sort)",
+    "package": {
+      "sha256": "df46bdb4e5daab02ac1e08277c1fbced1570750129bd2794e5ece811c06ae561",
+      "size": 231489,
+      "uncompressed_size": 526486,
+      "file_count": 140,
+      "strip_prefix": "Bagnon-3.3.5-27a08f89819311d772e7ec7a71a41eafb813f122/",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Bagnon",
+        "Bagnon_Config",
+        "Bagnon_Forever",
+        "Bagnon_GuildBank",
+        "Bagnon_Tooltips"
+      ],
+      "exclude_folders": [
+        "Bagnon_VoidStorage"
+      ],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Bagnon": "2.13.3",
+      "Bagnon_Forever": "1.1.2",
+      "Bagnon_GuildBank": "1.0.0"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "BagnonForeverDB",
+      "BagnonFrameSettings",
+      "BagnonGlobalSettings"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "ElvUI заменяет сумки своими — с ElvUI не включать (или отключить сумки ElvUI)."
+    ],
+    "notes": "Bagnon_VoidStorage исключён (Хранилища Бездны в 3.3.5 нет). Bagnon_Config.xml ссылается на отсутствующие widgets/button.lua и fr/ko-локали — код их не использует, ошибок Lua быть не должно (UNVERIFIED в клиенте).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [
+        "TOC/XML reference files absent from package (judged harmless, see notes): {\"Bagnon_Config\": [\"Bagnon_Config/localization/localization.fr.lua\", \"Bagnon_Config/localization/localization.ko.lua\", \"Bagnon_Config/widgets/button.lua\"]}"
+      ],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "atlasloot",
+    "name": "AtlasLoot Enhanced",
+    "group": "convenience",
+    "description_ru": "Справочник добычи: что падает с боссов подземелий и рейдов, награды за репутацию, рецепты и комплекты.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "v5.11.04",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/AtlasLoot/",
+      "take_folders": null,
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "GPL-2.0 (TOC X-License + Documentation/LICENSE.txt)",
+    "authors": "Hegarol and AtlasLoot Enhanced team",
+    "package": {
+      "sha256": "9594479da17c9e117efab91de1730ed7b7741d7a7280a61981f3ac15e3a8b917",
+      "size": 1964743,
+      "uncompressed_size": 9322530,
+      "file_count": 145,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "AtlasLoot",
+        "AtlasLootFu",
+        "AtlasLoot_BurningCrusade",
+        "AtlasLoot_Crafting",
+        "AtlasLoot_OriginalWoW",
+        "AtlasLoot_WorldEvents",
+        "AtlasLoot_WrathoftheLichKing"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "AtlasLoot": "v5.11.04",
+      "AtlasLootFu": "v5.11.04",
+      "AtlasLoot_BurningCrusade": "v5.11.04",
+      "AtlasLoot_Crafting": "v5.11.04",
+      "AtlasLoot_OriginalWoW": "v5.11.04",
+      "AtlasLoot_WorldEvents": "v5.11.04",
+      "AtlasLoot_WrathoftheLichKing": "v5.11.04"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "AtlasLootCharDB",
+      "AtlasLootDB",
+      "AtlasLootFilterDB",
+      "AtlasLootFuDB",
+      "AtlasLootOptions",
+      "AtlasLootWishList"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [],
+    "notes": "Финальная версия для 3.3.5. Данные стоковые: кастомные предметы и правки лута нашего сервера в нём не видны. Включает AtlasLootFu (плагин FuBar) и 5 LoD-модулей.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "auctionator",
+    "name": "Auctionator",
+    "group": "convenience",
+    "description_ru": "Упрощает аукцион: быстрый поиск, история цен и выставление лота в один клик по лучшей цене.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "2.6.8 (Fixed @ d6c3d72, 2026-06-12)",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/thierbig/Auctionator-3.3.5-Fixed",
+      "ref": "d6c3d7260d1d4273d9f97246bd013f17d7ebc256",
+      "ref_date": "2026-06-12",
+      "url": "https://codeload.github.com/thierbig/Auctionator-3.3.5-Fixed/zip/d6c3d7260d1d4273d9f97246bd013f17d7ebc256"
+    },
+    "license": "none stated",
+    "authors": "Zirco (original), thierbig and contributors (3.3.5 fixes)",
+    "package": {
+      "sha256": "7092f176e4e1fc5fa67f216ea77f452f9e8344b7d7ea90bd4ae9d52f9fd07d66",
+      "size": 252155,
+      "uncompressed_size": 1132961,
+      "file_count": 38,
+      "strip_prefix": "Auctionator-3.3.5-Fixed-d6c3d7260d1d4273d9f97246bd013f17d7ebc256/",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Auctionator"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Auctionator": "2.6.8"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "AUCTIONATOR_A_TIPS",
+      "AUCTIONATOR_DEFTAB",
+      "AUCTIONATOR_DEF_DURATION",
+      "AUCTIONATOR_DE_DETAILS_TIPS",
+      "AUCTIONATOR_D_TIPS",
+      "AUCTIONATOR_ENABLE_ALT",
+      "AUCTIONATOR_LAST_SCAN_TIME",
+      "AUCTIONATOR_MEAN_PRICE_DATABASE",
+      "AUCTIONATOR_OPEN_ALL_BAGS",
+      "AUCTIONATOR_OPEN_BUY",
+      "AUCTIONATOR_OPEN_FIRST",
+      "AUCTIONATOR_PRICE_DATABASE",
+      "AUCTIONATOR_PRICING_HISTORY",
+      "AUCTIONATOR_SAVEDVARS",
+      "AUCTIONATOR_SCAN_MINLEVEL",
+      "AUCTIONATOR_SHIFT_TIPS",
+      "AUCTIONATOR_SHOPPING_LISTS",
+      "AUCTIONATOR_SHOW_ST_PRICE",
+      "AUCTIONATOR_SHOW_TIPS",
+      "AUCTIONATOR_STACKING_PREFS",
+      "AUCTIONATOR_TOONS",
+      "AUCTIONATOR_V_TIPS"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Auctioneer (не в каталоге) — дубль."
+    ],
+    "notes": "Оригинальный 2.6.8 + исправления зависаний полного скана (протестирован на Warmane/Epoch по README). В корне репо есть tests/ и .github/ — не распаковываются (берётся только папка Auctionator). Альтернатива JedborgWoW/Auctionator-3.3.5a (бэкпорт Classic, 1★) не взята.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [
+        "TOC/XML reference files absent from package (judged harmless, see notes): {\"Auctionator\": [\"Auctionator/Locales/svSE.lua\"]}"
+      ],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "postal",
+    "name": "Postal",
+    "group": "convenience",
+    "description_ru": "Улучшает почту: забрать всё одним нажатием, адресная книга, быстрая пересылка и возврат писем.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "4.3.0 backport (release v3.3.5a)",
+    "source": {
+      "type": "github_release_asset",
+      "repo": "https://github.com/Keoo88/Postal-3.3.5-backport",
+      "ref": "v3.3.5a",
+      "ref_date": "2026-06-29",
+      "url": "https://github.com/Keoo88/Postal-3.3.5-backport/releases/download/v3.3.5a/Postal.zip",
+      "immutability": "tag+asset name; owner could replace the asset -> trust sha256, host our own copy"
+    },
+    "license": "none stated (README points to LICENSE.txt that was removed from the repo)",
+    "authors": "Xinhuan (original), Keoo (3.3.5 backport of Classic 4.3.0)",
+    "package": {
+      "sha256": "d1614965b46d7f5ac0e08e54a3b696aeb5520e844874c40f5a27439d2da8dc89",
+      "size": 98734,
+      "uncompressed_size": 357671,
+      "file_count": 33,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Postal"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Postal": "4.3.0"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "Postal3DB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Leatrix Plus тоже умеет кое-что на почте — не конфликтует, но опции могут дублироваться."
+    ],
+    "notes": "Взят по правилу (1): отдельный репо 3.3.5a-бэкпорта с релизом. Но он молодой (2026, 3★). Проверено: нет вызовов SendMail/SetSendMailMoney из кода. Консервативный запасной вариант — оригинальный Postal 3.3.2 (Xinhuan) из TrinityCore-подборки.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "leatrixplus",
+    "name": "Leatrix Plus",
+    "group": "convenience",
+    "description_ru": "Набор удобств в одном окне: автопродажа хлама, автопочинка, ускоренный сбор добычи, отказ от дуэлей и многое другое.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "1.8.2 (TOC: '3.3.5 (3.0.131)', title marked [ALPHA])",
+    "source": {
+      "type": "github_release_asset",
+      "repo": "https://github.com/Sattva-108/Leatrix_Plus",
+      "ref": "1.8.2",
+      "ref_date": "2026-08-31",
+      "url": "https://github.com/Sattva-108/Leatrix_Plus/releases/download/1.8.2/Leatrix_Plus.zip",
+      "immutability": "tag+asset name; owner could replace the asset -> trust sha256, host our own copy"
+    },
+    "license": "none stated",
+    "authors": "Leatrix (original), Sattva-108 (3.3.5a backport)",
+    "package": {
+      "sha256": "739d6b5fe8edcbffbc6656660e2cbcd8dd1bd8b0448777bc225e0a7e6e9d4ec1",
+      "size": 798999,
+      "uncompressed_size": 3814457,
+      "file_count": 41,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Leatrix_Plus"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Leatrix_Plus": "3.3.5 (3.0.131)"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "LeaPlusDB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Пересекается по функциям с Mapster (карта/миникарта), ElvUI (миникарта, тултипы) — включать нужные опции только в одном аддоне."
+    ],
+    "notes": "Бэкпорт из WotLK Classic, активно ведётся; автор сам пометил сборку [ALPHA]. Leatrix_Plus_Wrath.toc в папке игнорируется клиентом 3.3.5.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "weakauras",
+    "name": "WeakAuras",
+    "group": "interface",
+    "description_ru": "Конструктор индикаторов: показывает баффы, перезарядки и сигналы так, как вы настроите; готовые наборы — на wago.io.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "5.22.0 (release 5.22.0-6d6b7a5c)",
+    "source": {
+      "type": "github_release_asset",
+      "repo": "https://github.com/NoM0Re/WeakAuras-WotLK",
+      "ref": "5.22.0-6d6b7a5c",
+      "ref_date": "2026-10-01",
+      "url": "https://github.com/NoM0Re/WeakAuras-WotLK/releases/download/5.22.0-6d6b7a5c/WeakAuras2.zip",
+      "immutability": "tag+asset name; owner could replace the asset -> trust sha256, host our own copy"
+    },
+    "license": "GPL-2.0",
+    "authors": "The WeakAuras Team; NoM0Re (WotLK backport)",
+    "package": {
+      "sha256": "5b3152d4723c5a7eac7f7df6889b99ac4084f63cf24477682e0fbd7311e71dea",
+      "size": 23260551,
+      "uncompressed_size": 232606605,
+      "file_count": 992,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "APIDocumentation",
+        "WeakAuras",
+        "WeakAurasArchive",
+        "WeakAurasModelPaths",
+        "WeakAurasOptions",
+        "WeakAurasStopMotion",
+        "WeakAurasTemplates"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "APIDocumentation": "1.0.2",
+      "WeakAuras": "5.22.0",
+      "WeakAurasArchive": "5.22.0",
+      "WeakAurasModelPaths": "5.22.0",
+      "WeakAurasOptions": "5.22.0",
+      "WeakAurasTemplates": "5.22.0"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "WeakAurasArchive",
+      "WeakAurasOptionsSaved",
+      "WeakAurasSaved"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [],
+    "notes": "Активный бэкпорт современной WA. Тяжёлый (23 MB zip) — желателен Large Address Aware. README рекомендует клиентское расширение awesome_wotlk (DLL) — мы его НЕ поставляем, без него часть функций (поиск неймплейтов, TTS) просто выключена. Старый вариант Bunny67/WeakAuras-WotLK 4.0.0 (2022) — запасной, не включён. Ауры из wago.io для 3.3.5 нужно брать именно под эту ветку (5.x).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "omnicc",
+    "name": "OmniCC",
+    "group": "interface",
+    "description_ru": "Пишет оставшееся время перезарядки цифрами прямо на кнопках способностей и предметов.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "3.0.4",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/UnePomme/ChromieRepo",
+      "ref": "9bd5661525f9a9383bfe63cc41eabade394fc8a9",
+      "ref_date": "2024-06-01",
+      "url": "https://codeload.github.com/UnePomme/ChromieRepo/zip/9bd5661525f9a9383bfe63cc41eabade394fc8a9",
+      "path_in_source": "ChromieRepo-9bd5661525f9a9383bfe63cc41eabade394fc8a9/3.3.5a Addons/1. Working Addons/",
+      "take_folders": [
+        "OmniCC",
+        "OmniCC_Config"
+      ],
+      "source_zip_sha256": "5bede26af8c58ee6a1eba9afdbf00cdf019d28bc256b6bed6bebf761aae955c0",
+      "source_zip_size": 103495675,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "MIT",
+    "authors": "Tuller",
+    "package": {
+      "sha256": "ba761170c0cdb3c6234e254173d80e31109bb6272789864d99603bd99891281b",
+      "size": 41414,
+      "uncompressed_size": 101669,
+      "file_count": 44,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "OmniCC",
+        "OmniCC_Config"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "OmniCC": "3.0.4"
+    },
+    "has_ruRU": "no",
+    "saved_variables": [
+      "OmniCCGlobalSettings"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "ElvUI выводит своё время перезарядки — с ElvUI не включать (двойные цифры)."
+    ],
+    "notes": "3.0.4 из ChromieRepo вместо 3.0 из TrinityCore-подборки (там лежат хвосты 2.x: OmniCC_Options и full.lua). Перевода на русский нет — текста почти нет, работает на любом клиенте.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "elvui",
+    "name": "ElvUI",
+    "group": "interface",
+    "description_ru": "Полная замена интерфейса: панели, рамки игроков, сумки, чат и карта в едином стиле.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "6.09 + 10 fix commits (master @ 58ea24f, 2022-10-26)",
+    "source": {
+      "type": "github_codeload_commit",
+      "repo": "https://github.com/ElvUI-WotLK/ElvUI",
+      "ref": "58ea24f7979740221389ce09685eb445723a6346",
+      "ref_date": "2022-10-26",
+      "url": "https://codeload.github.com/ElvUI-WotLK/ElvUI/zip/58ea24f7979740221389ce09685eb445723a6346"
+    },
+    "license": "none stated (bundled oUF = MIT)",
+    "authors": "Elv, Bunny (ElvUI-WotLK team)",
+    "package": {
+      "sha256": "030f651ba230a2f0f5d3787a8fa7ff6c8ba77be285521819a7da7aabe7456a8b",
+      "size": 3727870,
+      "uncompressed_size": 8672381,
+      "file_count": 608,
+      "strip_prefix": "ElvUI-58ea24f7979740221389ce09685eb445723a6346/",
+      "rename_root_to": null,
+      "addon_folders": [
+        "ElvUI",
+        "ElvUI_OptionsUI"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "ElvUI": "6.09",
+      "ElvUI_OptionsUI": "1.06"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "ElvCharacterDB",
+      "ElvDB",
+      "ElvPrivateDB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "Заменяет Bartender4 (панели), Bagnon (сумки), OmniCC (цифры перезарядки), Titan Panel (инфо-панели), частично Mapster/Leatrix Plus (миникарта), Omen (угроза)."
+    ],
+    "notes": "Последний релиз 6.09 (2022); репо не обновляется с 2022. Тяжёлый — никогда не включать по умолчанию.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "bartender4",
+    "name": "Bartender4",
+    "group": "interface",
+    "description_ru": "Гибкие панели команд: перемещайте, масштабируйте и скрывайте кнопки как угодно.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "4.4.2-12-g94f3b58",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/Bartender4/",
+      "take_folders": [
+        "Bartender4"
+      ],
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "none stated (TOC X-License: All rights reserved)",
+    "authors": "Nevcairiel",
+    "package": {
+      "sha256": "279235be63bf49387e0d355dac259ac7e42b3b267cda4768d75109ae762bb13c",
+      "size": 275669,
+      "uncompressed_size": 861491,
+      "file_count": 123,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Bartender4"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Bartender4": "4.4.2-12-g94f3b58"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "Bartender4DB"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "ElvUI имеет свои панели — вместе не включать."
+    ],
+    "notes": "Сторонний плагин Bartender4_Dualspec из подборки исключён: без Dependencies, ссылается на отсутствующие libs, 'All rights reserved'.",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  },
+  {
+    "slug": "titanpanel",
+    "name": "Titan Panel",
+    "group": "interface",
+    "description_ru": "Полоса вверху экрана с полезными сведениями: золото, координаты, задержка, прочность снаряжения и др.",
+    "default_enabled": false,
+    "alternative_group": null,
+    "is_alternative": false,
+    "version": "4.3.8.30300 (Revision 386)",
+    "source": {
+      "type": "github_collection_carve",
+      "repo": "https://github.com/TrinityCore/wow_335a_addons",
+      "ref": "4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "ref_date": "2024-09-23",
+      "url": "https://codeload.github.com/TrinityCore/wow_335a_addons/zip/4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a",
+      "path_in_source": "wow_335a_addons-4c551c5cdb8937ddc8f7c87d936549b3e7dc0b7a/Titan/",
+      "take_folders": null,
+      "source_zip_sha256": "3074caf891c7f21c6215bbfe5f364d052b1ae84f2d5457b577d1b44693969e7d",
+      "source_zip_size": 96940541,
+      "repack": "per-addon zip rebuilt deterministically (sorted entries, fixed mtime 2010-06-22, junk desktop.ini/*.bak dropped); folders at zip root"
+    },
+    "license": "LicenseRef-TitanPanel (custom: all rights reserved, redistribution WITHOUT modification permitted — Titan/license.txt)",
+    "authors": "Titan Development Team",
+    "package": {
+      "sha256": "cbeb9fb73157f560d9c8471c9b1c26284dc43ee378d02ccf7a92fb8f0861288d",
+      "size": 611161,
+      "uncompressed_size": 2169106,
+      "file_count": 218,
+      "strip_prefix": "",
+      "rename_root_to": null,
+      "addon_folders": [
+        "Titan",
+        "TitanAmmo",
+        "TitanBag",
+        "TitanClock",
+        "TitanCoords",
+        "TitanGoldTracker",
+        "TitanLootType",
+        "TitanPerformance",
+        "TitanRegen",
+        "TitanRepair",
+        "TitanVolume",
+        "TitanXP"
+      ],
+      "exclude_folders": [],
+      "exclude_paths": [],
+      "install_to": "Interface/AddOns/"
+    },
+    "interface": [
+      "30300"
+    ],
+    "toc_versions": {
+      "Titan": "4.3.8.30300 - Revision 386",
+      "TitanAmmo": "4.3.8.30300",
+      "TitanBag": "4.3.8.30300",
+      "TitanClock": "4.3.8.30300",
+      "TitanCoords": "4.3.8.30300",
+      "TitanGoldTracker": "4.3.8.30300",
+      "TitanLootType": "4.3.8.30300",
+      "TitanPerformance": "4.3.8.30300",
+      "TitanRegen": "4.3.8.30300",
+      "TitanRepair": "4.3.8.30300",
+      "TitanVolume": "4.3.8.30300",
+      "TitanXP": "4.3.8.30300"
+    },
+    "has_ruRU": "yes",
+    "saved_variables": [
+      "GoldArray",
+      "ServerHourFormat",
+      "ServerTimeOffsets",
+      "TitanSettings",
+      "TitanSkins"
+    ],
+    "savedvariables_migration": false,
+    "conflicts": [
+      "ElvUI datatexts дублируют функционал."
+    ],
+    "notes": "12 папок: ядро Titan + стандартные плагины. Лицензия разрешает раздачу без изменений — наш пакет не меняет файлы (только перепаковка).",
+    "verification": {
+      "ok": true,
+      "zip_test": "ok",
+      "executables": [],
+      "unsafe_paths": [],
+      "unmet_required_deps": [],
+      "warnings": [],
+      "in_game_tested": false
+    }
+  }
+]
