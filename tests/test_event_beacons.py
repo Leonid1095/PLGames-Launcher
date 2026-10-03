@@ -1,4 +1,4 @@
-"""Метки событий: серверный скрипт 61_plg_event_beacons.lua и аддон PLGames_Events в Lua 5.1 (пакет lupa).
+"""Метки событий: серверный скрипт 62_plg_event_beacons.lua и аддон PLGames_Events в Lua 5.1 (пакет lupa).
 
 Без lupa тесты пропускаются; серверные — ещё и вне репозитория WOW (в CI лаунчера скрипта нет)."""
 
@@ -13,8 +13,9 @@ except ImportError:  # pragma: no cover
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDON = os.path.join(ROOT, "addons", "PLGames_Events")
-SERVER = os.path.join(ROOT, "..", "data", "lua", "scripts")
-BEACONS = os.path.join(SERVER, "61_plg_event_beacons.lua")
+# серверные скрипты: рядом в репозитории WOW или там, куда указывает PLG_SERVER_SCRIPTS
+SERVER = os.environ.get("PLG_SERVER_SCRIPTS") or os.path.join(ROOT, "..", "data", "lua", "scripts")
+BEACONS = os.path.join(SERVER, "62_plg_event_beacons.lua")
 
 
 def read(path):
@@ -277,7 +278,7 @@ class ServerBeaconsTests(unittest.TestCase):
         self.assertEqual(self.inbox()[0], "S")
 
     def test_server_scripts_with_getters_compile(self):
-        for name in ("13_lw_construction.lua", "54_plg_caravan_payload.lua", "61_plg_event_beacons.lua"):
+        for name in ("13_lw_construction.lua", "54_plg_caravan_payload.lua", "62_plg_event_beacons.lua"):
             ok, err = self.lua.eval("function(src, name) local f, e = loadstring(src, name) return f ~= nil, e end")(
                 read(os.path.join(SERVER, name)), name)
             self.assertTrue(ok, err)

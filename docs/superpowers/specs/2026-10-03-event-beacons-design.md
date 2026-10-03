@@ -20,7 +20,7 @@
 
 | Часть | Где | Что делает |
 |---|---|---|
-| Серверный скрипт | `data/lua/scripts/61_plg_event_beacons.lua` (репозиторий WOW) | Каждые 5 с сверяет список меток с состоянием систем и рассылает изменения |
+| Серверный скрипт | `data/lua/scripts/62_plg_event_beacons.lua` (репозиторий WOW) | Каждые 5 с сверяет список меток с состоянием систем и рассылает изменения |
 | Геттеры | `13_lw_construction.lua` → `LW_Construction.GetConstructing()`, `54_plg_caravan_payload.lua` → `PLG_CaravanPayload.GetActive()` | Только чтение: эти данные лежат в локальных переменных файлов |
 | Аддон | `launcher/addons/PLGames_Events/` | Встроенный, ставится вместе с Live City при каждом запуске игры |
 | Таблица зон | `addons/PLGames_Events/MapAreas.lua` из `tools/build_map_areas.py` | Границы зон из `WorldMapArea.dbc` клиента для пересчёта координат |

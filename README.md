@@ -208,7 +208,7 @@ Questie и DBM. Если папка аддона из каталога уже л
 **Аддоны сервера** — папки `addons/` в поставке; лаунчер кладёт их в игру при каждом запуске, выключить нельзя:
 - PLGames Live City — реплики жителей пузырём над головой, а не в чате;
 - PLGames Events — метки событий сервера на карте мира, миникарте и в списке (боссы, события зон, караваны,
-  цепочки, стройки). Серверная часть — `data/lua/scripts/61_plg_event_beacons.lua` в репозитории WOW.
+  цепочки, стройки). Серверная часть — `data/lua/scripts/62_plg_event_beacons.lua` в репозитории WOW.
   Протокол и устройство: `docs/superpowers/specs/2026-10-03-event-beacons-design.md`. Таблица зон
   `MapAreas.lua` — из `WorldMapArea.dbc` клиента: `python tools/build_map_areas.py --client <игра>`.
   В игре: `/plgev` (список), `/plgev test` (пробная метка), `/plgev minimap`, `/plgev clear`.
