@@ -481,6 +481,50 @@ def component_status(manifest, game_dir, state):
     return out
 
 
+def find_broken(manifest, game_dir, state):
+    """Установленные нами компоненты, чьи файлы после установки удалили или подменили
+    (антивирус, ручная правка). Возвращает (id сломанных, обновлён ли state).
+    files: размер, затем время изменения; SHA-256 считается, только если время другое, и совпавшее
+    время запоминается в state["components"][id]["stat"] — вызывающий сохраняет state.
+    zip: папки аддона на месте; installer: файл-маркер на месте. Изменяемые файлы (mutable) не проверяются."""
+    broken, touched = set(), False
+    records = state.get("components", {})
+    for c in manifest.components:
+        rec = records.get(c.id)
+        if not isinstance(rec, dict):
+            continue
+        if c.type == "files":
+            stats = rec.setdefault("stat", {})
+            for f in c.files:
+                if f.mutable:
+                    continue
+                path = gameutils.safe_join(game_dir, f.path)
+                try:
+                    st = os.stat(path)
+                except (OSError, TypeError):
+                    broken.add(c.id)
+                    break
+                if st.st_size != f.size:
+                    broken.add(c.id)
+                    break
+                if stats.get(f.path) == [st.st_size, st.st_mtime_ns]:
+                    continue
+                if _sha256_file(path) != f.sha256:
+                    broken.add(c.id)
+                    break
+                stats[f.path] = [st.st_size, st.st_mtime_ns]
+                touched = True
+        elif c.type == "zip":
+            root = gameutils.safe_join(game_dir, c.target)
+            if not root or not all(os.path.isdir(os.path.join(root, d)) for d in c.folders):
+                broken.add(c.id)
+        elif c.type == "installer":
+            marker = gameutils.safe_join(game_dir, c.marker)
+            if not marker or not os.path.isfile(marker):
+                broken.add(c.id)
+    return broken, touched
+
+
 def download_bytes(manifest, status, component_ids):
     """Сколько придётся скачать, чтобы включить эти компоненты (уже установленное не считается)."""
     total = 0
@@ -610,6 +654,105 @@ def _move_back(src, dst):
     os.replace(src, dst)
 
 
+# ---------------------------------------------------------------------------
+# Журнал отмены на диске: установка, оборванная падением процесса или ПК, откатывается при следующем запуске
+# ---------------------------------------------------------------------------
+
+JOURNAL_FILE = "apply-journal.json"
+
+
+def journal_path(game_dir):
+    return os.path.join(game_dir, STATE_DIR, JOURNAL_FILE)
+
+
+def _undo_op(game_dir, op):
+    """Отменить одно изменение клиента из журнала на диске."""
+    kind = op.get("op")
+    if kind == "move":                                    # файл перенесён из to в from — вернуть
+        _move_back(op["from"], op["to"])
+    elif kind == "mpq":
+        if not gameutils.toggle_mpq(game_dir, op["name"], op["folder"], bool(op["enable"])):
+            raise OSError(f"не удалось переключить {op['name']}")
+    elif kind == "config":
+        values = {k: v for k, v in op["values"].items() if _CFG_KEY_RE.match(str(k)) and (v is None or isinstance(v, str))}
+        if values and not gameutils.write_config_wtf(game_dir, values):
+            raise OSError("не удалось записать WTF/Config.wtf")
+    elif kind == "run":
+        argv = op["argv"]
+        if not (isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv)
+                and argv[0].lower().endswith(".exe") and os.path.isfile(argv[0])):
+            raise OSError("в журнале неверная команда отмены")
+        _run_process(argv, op["cwd"], lambda line: None)
+    else:
+        raise ValueError(f"неизвестная запись журнала «{kind}»")
+
+
+class _Journal:
+    """Журнал отмены. Записи для state.json живут только в памяти: при падении state.json не успевает
+    записаться и остаётся прежним. Изменения клиента (op) после каждого шага пишутся на диск."""
+
+    def __init__(self, game_dir):
+        self.game_dir = game_dir
+        self._entries = []  # (функция отмены, op для диска или None)
+
+    def append(self, undo):
+        self._entries.append((undo, None))
+
+    def disk(self, op, undo):
+        self._entries.append((undo, op))
+        self._save()
+
+    def _save(self):
+        ops = [op for _, op in self._entries if op is not None]
+        if ops:
+            _write_json_atomic(journal_path(self.game_dir), {"schema": 1, "ops": ops})
+        else:
+            self.close()
+
+    def undo_all(self):
+        errors = []
+        while self._entries:
+            undo, op = self._entries.pop()
+            try:
+                undo()
+            except Exception as e:
+                errors.append(str(e))
+            if op is not None:
+                self._save()
+        self.close()
+        return errors
+
+    def close(self):
+        _remove_quietly(journal_path(self.game_dir))
+
+
+def recover(game_dir):
+    """Если прошлая установка оборвалась (журнал на диске не закрыт) — отменить её изменения
+    с конца. Возвращает (был ли журнал, ошибки отмены)."""
+    path = journal_path(game_dir)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        ops = list(data["ops"])
+    except FileNotFoundError:
+        return False, []
+    except (OSError, ValueError, KeyError, TypeError):
+        _remove_quietly(path)
+        return True, ["журнал прошлой установки повреждён"]
+    errors = []
+    while ops:
+        op = ops.pop()
+        try:
+            _undo_op(game_dir, op)
+        except Exception as e:
+            errors.append(f"{op.get('op')}: {e}" if isinstance(op, dict) else str(e))
+        if ops:
+            _write_json_atomic(path, {"schema": 1, "ops": ops})
+    _remove_quietly(path)
+    shutil.rmtree(os.path.join(game_dir, STATE_DIR, "tmp"), ignore_errors=True)
+    return True, errors
+
+
 class Executor:
     """Применяет план к папке игры. Сначала все загрузки во временную папку (клиент
     не трогается), затем изменения с журналом отмены; при любой ошибке журнал
@@ -637,20 +780,26 @@ class Executor:
         self._after_success = []
 
     def run(self, actions, edition=None):
-        """edition=None — набор аддонов: записанное издание не меняется."""
+        """edition=None — набор аддонов: записанное издание не меняется.
+        План строится по состоянию клиента, поэтому оборванную установку вызывающий откатывает
+        до плана (recover); здесь — страховка, если не откатил."""
+        running = self._is_running(self.game_dir)
+        if not running:
+            recover(self.game_dir)
         if not actions:
             if edition is not None:
                 self.state["edition"] = edition
             save_state(self.game_dir, self.state)
             return self.state
-        if self._is_running(self.game_dir):
+        if running:
             raise ApplyError("Закройте игру, чтобы сменить издание")
         shutil.rmtree(self._tmp, ignore_errors=True)
         os.makedirs(self._tmp)
+        journal = _Journal(self.game_dir)
+        clean_tmp = True
         try:
             downloads = self._download_all(actions)
             self._check_cancel()
-            journal = []
             try:
                 for i, action in enumerate(actions):
                     comp = self.manifest.component(action.component)
@@ -660,27 +809,27 @@ class Executor:
                     self.state["edition"] = edition
                 self.state["content_version"] = self.manifest.content_version
                 save_state(self.game_dir, self.state)
+                journal.close()
                 for cleanup in self._after_success:
                     try:
                         cleanup()
                     except Exception:
                         pass
             except Exception as e:
-                undo_errors = []
-                for undo in reversed(journal):
-                    try:
-                        undo()
-                    except Exception as ue:
-                        undo_errors.append(str(ue))
+                undo_errors = journal.undo_all()
                 msg = str(e) if isinstance(e, ApplyError) else f"Не удалось применить изменения: {e}"
                 if undo_errors:
                     msg += (f". Откат выполнен не полностью ({'; '.join(undo_errors[:3])}) — "
                             "проверьте клиент или выберите издание заново")
                 raise ApplyError(msg) from e
+            except BaseException:
+                clean_tmp = False  # падение: журнал и временные файлы нужны recover() при следующем запуске
+                raise
             self._progress(stage="apply", done=len(actions), total=len(actions), text="готово")
             return self.state
         finally:
-            shutil.rmtree(self._tmp, ignore_errors=True)
+            if clean_tmp:
+                shutil.rmtree(self._tmp, ignore_errors=True)
 
     # ---- загрузка ----
 
@@ -830,7 +979,7 @@ class Executor:
     def _move(self, src, dst, journal):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.replace(src, dst)
-        journal.append(lambda: _move_back(dst, src))
+        journal.disk({"op": "move", "from": dst, "to": src}, lambda: _move_back(dst, src))
 
     def _toggle(self, comp, enable, journal):
         for m in comp.mpqs:
@@ -840,7 +989,8 @@ class Executor:
             if not gameutils.toggle_mpq(self.game_dir, m.name, m.folder, enable):
                 verb = "включить" if enable else "выключить"
                 raise ApplyError(f"Не удалось {verb} {m.name}: файл занят другой программой?")
-            journal.append(lambda m=m: gameutils.toggle_mpq(self.game_dir, m.name, m.folder, not enable))
+            journal.disk({"op": "mpq", "name": m.name, "folder": m.folder, "enable": not enable},
+                         lambda m=m: gameutils.toggle_mpq(self.game_dir, m.name, m.folder, not enable))
 
     def _do_mpq_on(self, comp, downloads, journal):
         self._toggle(comp, True, journal)
@@ -866,7 +1016,14 @@ class Executor:
                 journal.append(lambda p=f.path: backups.pop(p, None))
             self._move(downloads[(comp.id, f.path)], dst, journal)
             record[f.path] = MUTABLE_MARK if f.mutable else f.sha256
-        self.state["components"][comp.id] = {"version": comp.version, "files": record}
+        stat = {}  # для find_broken: без пересчёта хэша, пока файл не трогали
+        for f in comp.files:
+            try:
+                st = os.stat(self._target(f.path))
+                stat[f.path] = [st.st_size, st.st_mtime_ns]
+            except OSError:
+                pass
+        self.state["components"][comp.id] = {"version": comp.version, "files": record, "stat": stat}
         journal.append(lambda: self.state["components"].pop(comp.id, None))
 
     def _do_files_remove(self, comp, downloads, journal):
@@ -875,6 +1032,8 @@ class Executor:
             dst = gameutils.safe_join(self.game_dir, rel)
             if not dst:
                 continue
+            if downloads.get((comp.id, rel)) is ADOPT:
+                continue  # переустановка: этот же файл уже лежит на месте и останется — не уносить
             if os.path.isfile(dst):
                 if our_sha == MUTABLE_MARK or _sha256_file(dst) == our_sha:
                     # Наш файл (или наш конфиг, переписанный игрой) — во временную папку, удалится после успеха.
@@ -914,7 +1073,8 @@ class Executor:
         previous = {k: current.get(k.lower()) for k in values}
         if not gameutils.write_config_wtf(self.game_dir, values):
             raise ApplyError("Не удалось записать WTF/Config.wtf")
-        journal.append(lambda: gameutils.write_config_wtf(self.game_dir, previous))
+        journal.disk({"op": "config", "values": previous},
+                     lambda: gameutils.write_config_wtf(self.game_dir, previous))
         self.state["components"][comp.id] = {"previous": previous, "applied": values}
         journal.append(lambda: self.state["components"].pop(comp.id, None))
 
@@ -925,7 +1085,8 @@ class Executor:
         applied = record.get("applied") or comp.values_dict()
         if previous and not gameutils.write_config_wtf(self.game_dir, previous):
             raise ApplyError("Не удалось записать WTF/Config.wtf")
-        journal.append(lambda: gameutils.write_config_wtf(self.game_dir, applied))
+        journal.disk({"op": "config", "values": applied},
+                     lambda: gameutils.write_config_wtf(self.game_dir, applied))
         old = self.state["components"].pop(comp.id, None)
         journal.append(lambda: self.state["components"].__setitem__(comp.id, old))
 
@@ -1062,7 +1223,8 @@ class Executor:
         self._extract_package(comp, downloads[(comp.id, ARCHIVE_KEY)], pkg)
         self._run_installer(comp, self._argv(comp, comp.install, pkg), pkg, "установка")
         uninstall = self._argv(comp, comp.uninstall, pkg)
-        journal.append(lambda: _run_process(uninstall, pkg, lambda line: None))
+        journal.disk({"op": "run", "argv": uninstall, "cwd": pkg},
+                     lambda: _run_process(uninstall, pkg, lambda line: None))
         self.state["components"][comp.id] = {"version": comp.version, "package_dir": pkg,
                                              "uninstall": list(comp.uninstall)}
         journal.append(lambda: self.state["components"].pop(comp.id, None))
@@ -1079,7 +1241,8 @@ class Executor:
         self._run_installer(comp, self._argv(comp, template, pkg), pkg, "удаление")
         install = self._argv(comp, comp.install, pkg) if comp.install else None
         if install:
-            journal.append(lambda: _run_process(install, pkg, lambda line: None))
+            journal.disk({"op": "run", "argv": install, "cwd": pkg},
+                         lambda: _run_process(install, pkg, lambda line: None))
         old = self.state["components"].pop(comp.id, None)
         journal.append(lambda: self.state["components"].__setitem__(comp.id, old))
         self._after_success.append(lambda: shutil.rmtree(pkg, ignore_errors=True))

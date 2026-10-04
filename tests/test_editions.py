@@ -217,6 +217,97 @@ class AddonServiceTests(unittest.TestCase):
         self.assertEqual(self.svc.view(self.gd)["chosen"], "classic")
 
 
+class HealTests(unittest.TestCase):
+    """Самовосстановление: оборванная установка продолжается, испорченные файлы ставятся заново."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.gd = make_client(self.tmp)
+        builtin = os.path.join(self.tmp, "builtin.json")
+        with open(builtin, "w", encoding="utf-8") as f:
+            json.dump(ext_manifest(), f)
+        self.running = False
+        self.svc = editions.EditionService(
+            ["https://offline/m.json"], os.path.join(self.tmp, "cache.json"), builtin,
+            session_factory=lambda: FakeSession(ext_routes()), gpu_detector=lambda: [],
+            caps_detector=lambda: frozenset(), is_running=lambda gd: self.running,
+            installers_dir=os.path.join(self.tmp, "installers"))
+
+    def wait(self):
+        end = time.time() + 10
+        while self.svc.busy() and time.time() < end:
+            time.sleep(0.02)
+        return self.svc.status()
+
+    def apply_ultra(self):
+        self.assertEqual(self.svc.start_apply(self.gd, edition_id="ultra"), (True, ""))
+        self.assertEqual(self.wait()["state"], "finished")
+
+    def test_nothing_to_do(self):
+        self.apply_ultra()
+        self.assertEqual(self.svc.heal(self.gd), "ok")
+        self.assertEqual(self.svc.heal(""), "skip")
+
+    def test_game_running_is_left_alone(self):
+        self.apply_ultra()
+        os.remove(os.path.join(self.gd, "d3d9.dll"))
+        self.running = True
+        self.assertEqual(self.svc.heal(self.gd), "skip")
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "d3d9.dll")))
+
+    def test_tampered_edition_file_is_reinstalled_and_edition_kept(self):
+        self.apply_ultra()
+        dll = os.path.join(self.gd, "d3d9.dll")
+        with open(dll, "r+b") as f:
+            f.write(b"XX")  # тот же размер, другое содержимое
+        os.utime(dll, ns=(1, 1))  # время изменения другое — считаем хэш
+        self.assertEqual(self.svc.heal(self.gd), "repair")
+        self.assertEqual(self.wait()["state"], "finished")
+        with open(dll, "rb") as f:
+            self.assertEqual(f.read(), DLL)
+        v = self.svc.view(self.gd)
+        self.assertEqual((v["active"], v["chosen"]), ("ultra", "ultra"))
+        self.assertEqual(self.svc.heal(self.gd), "ok")
+
+    def test_unchanged_file_is_not_rehashed(self):
+        self.apply_ultra()
+        from unittest import mock
+        import content
+        with mock.patch.object(content, "_sha256_file", side_effect=AssertionError("лишний хэш")):
+            self.assertEqual(self.svc.heal(self.gd), "ok")
+
+    def test_deleted_addon_comes_back(self):
+        self.assertEqual(self.svc.start_apply(self.gd, addon_ids=["addon_questie"]), (True, ""))
+        self.assertEqual(self.wait()["state"], "finished")
+        shutil.rmtree(os.path.join(self.gd, "Interface", "AddOns", "Questie"))
+        self.assertEqual(self.svc.heal(self.gd), "repair")
+        self.assertEqual(self.wait()["state"], "finished")
+        self.assertTrue(os.path.isfile(os.path.join(self.gd, "Interface", "AddOns", "Questie", "Core.lua")))
+
+    def test_interrupted_install_is_rolled_back_and_resumed(self):
+        import content
+        from tests.test_content import Crash
+        real = content.Executor._do_config_apply
+
+        def crash(*a, **kw):
+            raise Crash()
+        content.Executor._do_config_apply = crash
+        try:
+            self.assertEqual(self.svc.start_apply(self.gd, edition_id="ultra"), (True, ""))
+            self.svc.join(10)  # поток «умер» посреди установки
+        finally:
+            content.Executor._do_config_apply = real
+        self.assertTrue(os.path.isfile(content.journal_path(self.gd)))
+        self.assertTrue(os.path.isfile(os.path.join(self.gd, "PLGames", "pending.json")))
+        self.assertEqual(self.svc.heal(self.gd), "resume")
+        self.assertEqual(self.wait()["state"], "finished")
+        v = self.svc.view(self.gd)
+        self.assertEqual((v["active"], v["chosen"]), ("ultra", "ultra"))
+        self.assertFalse(os.path.exists(content.journal_path(self.gd)))
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "PLGames", "pending.json")))
+
+
 class FallbackServiceTests(unittest.TestCase):
     """Forever на ПК без Vulkan 1.3: вместо Northlight ставится замена (в тестовом манифесте — DXVK)."""
 

@@ -509,6 +509,131 @@ class DownloadResumeTests(unittest.TestCase):
         self.assertEqual([u for u, _ in s.calls], [BASE + "/dxvk/dxvk.conf"])
 
 
+class ReinstallTests(unittest.TestCase):
+    """Переустановка = удалить + поставить. Файл, который уже лежит байт-в-байт, не качается — и не должен
+    пропасть, оттого что удаление успело унести его во временную папку."""
+
+    def test_version_bump_keeps_identical_files(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        gd = make_client(tmp)
+
+        def apply(data):
+            m = content.parse_manifest(data)
+            state = content.load_state(gd)
+            st = content.component_status(m, gd, state)
+            acts = content.plan(m, st, state, {"dxvk"})
+            content.Executor(m, gd, state, session=FakeSession(good_routes()), is_running=NOT_RUNNING).run(acts)
+            return content.component_status(m, gd, content.load_state(gd))
+
+        apply(manifest_dict())
+        bumped = manifest_dict()
+        bumped["components"][3]["version"] = "2.5"  # те же файлы, новая версия
+        st = apply(bumped)
+        self.assertTrue(st["dxvk"]["active"] and not st["dxvk"]["outdated"])
+        for name, body in (("d3d9.dll", DLL), ("dxvk.conf", CONF)):
+            with open(os.path.join(gd, name), "rb") as f:
+                self.assertEqual(f.read(), body, name)
+
+
+class Crash(BaseException):
+    """Падение процесса посреди установки: обычный except Exception его не ловит, finally — да."""
+
+
+class CrashRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.gd = make_client(self.tmp)
+        self.m = content.parse_manifest(manifest_dict())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def journal(self):
+        return os.path.join(self.gd, "PLGames", "apply-journal.json")
+
+    def crash_ultra(self, after):
+        """Применить «Ультру» и «упасть» перед действием after (files_install, config_apply …)."""
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        ed = next(e for e in self.m.editions if e.id == "ultra")
+        acts = content.plan(self.m, st, state, set(ed.components))
+        ex = content.Executor(self.m, self.gd, state, session=FakeSession(good_routes()), is_running=NOT_RUNNING)
+        real = getattr(ex, "_do_" + after)
+
+        def boom(*a, **kw):
+            raise Crash()
+        setattr(ex, "_do_" + after, boom)
+        with self.assertRaises(Crash):
+            ex.run(acts, edition="ultra")
+        setattr(ex, "_do_" + after, real)
+
+    def test_crash_leaves_journal_and_recover_restores_client(self):
+        with open(os.path.join(self.gd, "WTF", "Config.wtf")) as f:
+            config_before = f.read()
+        edition_before = content.detect_edition(self.m, content.component_status(self.m, self.gd, content.load_state(self.gd)))
+        self.crash_ultra(after="config_apply")
+        self.assertTrue(os.path.isfile(self.journal()))
+        self.assertTrue(os.path.isfile(os.path.join(self.gd, "d3d9.dll")))  # DXVK уже встал
+        ok, errors = content.recover(self.gd)
+        self.assertEqual((ok, errors), (True, []))
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "d3d9.dll")))
+        self.assertFalse(os.path.exists(self.journal()))
+        with open(os.path.join(self.gd, "WTF", "Config.wtf")) as f:
+            self.assertEqual(f.read(), config_before)
+        st = content.component_status(self.m, self.gd, content.load_state(self.gd))
+        self.assertFalse(st["dxvk"]["active"])
+        self.assertEqual(content.detect_edition(self.m, st), edition_before)
+
+    def test_mpq_toggles_are_rolled_back_too(self):
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        acts = content.plan(self.m, st, state, set())  # «Классика»: выключить HD-паки
+        ex = content.Executor(self.m, self.gd, state, session=FakeSession(good_routes()), is_running=NOT_RUNNING)
+        calls = []
+        real = gameutils.toggle_mpq
+
+        def toggle_then_crash(*a, **kw):
+            calls.append(a)
+            if len(calls) == 2:
+                raise Crash()
+            return real(*a, **kw)
+        with mock.patch.object(gameutils, "toggle_mpq", side_effect=toggle_then_crash):
+            with self.assertRaises(Crash):
+                ex.run(acts, edition="classic")
+        self.assertTrue(os.path.isfile(os.path.join(self.gd, "Data", "ruRU", "patch-ruRU-4.MPQ.disabled")))
+        content.recover(self.gd)
+        for name in ("patch-ruRU-4.MPQ", "patch-ruRU-5.MPQ", "Patch-ruRU-V.mpq"):
+            self.assertTrue(os.path.isfile(os.path.join(self.gd, "Data", "ruRU", name)), name)
+
+    def test_next_apply_recovers_first(self):
+        self.crash_ultra(after="config_apply")
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        acts = content.plan(self.m, st, state, {"hd_textures", "hd_water"})
+        content.Executor(self.m, self.gd, state, session=FakeSession(good_routes()),
+                         is_running=NOT_RUNNING).run(acts, edition="custom")
+        self.assertFalse(os.path.exists(self.journal()))
+        self.assertFalse(os.path.exists(os.path.join(self.gd, "d3d9.dll")))
+
+    def test_handled_error_and_success_leave_no_journal(self):
+        routes = good_routes()
+        routes[BASE + "/dxvk/dxvk.conf"] = FakeResponse(body=b"tampered")
+        state = content.load_state(self.gd)
+        st = content.component_status(self.m, self.gd, state)
+        ed = next(e for e in self.m.editions if e.id == "ultra")
+        with self.assertRaises(content.ApplyError):
+            content.Executor(self.m, self.gd, state, session=FakeSession(routes), is_running=NOT_RUNNING).run(
+                content.plan(self.m, st, state, set(ed.components)), edition="ultra")
+        self.assertFalse(os.path.exists(self.journal()))
+        content.Executor(self.m, self.gd, state, session=FakeSession(good_routes()), is_running=NOT_RUNNING).run(
+            content.plan(self.m, st, state, set(ed.components)), edition="ultra")
+        self.assertFalse(os.path.exists(self.journal()))
+
+    def test_recover_without_journal_is_a_no_op(self):
+        self.assertEqual(content.recover(self.gd), (False, []))
+
+
 def make_zip(entries):
     import io
     import zipfile

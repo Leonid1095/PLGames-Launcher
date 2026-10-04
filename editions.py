@@ -1,10 +1,12 @@
 """Фасад графических изданий для интерфейса лаунчера: манифест (кэш в памяти),
 представление для страницы «Издания», фоновое применение с прогрессом."""
 
+import json
 import os
 import threading
 
 import content
+import gameutils
 import hardware
 import useraddons
 
@@ -12,6 +14,47 @@ import useraddons
 def _requests_session():
     import requests
     return requests.Session()
+
+
+PENDING_FILE = "pending.json"  # что ставилось: если процесс упал, heal() продолжит
+
+
+def _pending_path(game_dir):
+    return os.path.join(game_dir, content.STATE_DIR, PENDING_FILE)
+
+
+def _write_pending(game_dir, args):
+    try:
+        content._write_json_atomic(_pending_path(game_dir), args)
+    except OSError:
+        pass  # без файла продолжения не будет, но откат журнала всё равно сработает
+
+
+def _read_pending(game_dir):
+    """Аргументы оборванной установки или None. Чужое содержимое отбрасывается."""
+    try:
+        with open(_pending_path(game_dir), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+
+    def ids(v):
+        return v if v is None or (isinstance(v, list) and all(isinstance(x, str) for x in v)) else False
+    if not isinstance(data, dict) or not (data.get("edition_id") is None or isinstance(data.get("edition_id"), str)):
+        return None
+    args = {"edition_id": data.get("edition_id"), "component_ids": ids(data.get("component_ids")),
+            "addon_ids": ids(data.get("addon_ids")), "force": ids(data.get("force") or []),
+            "keep_label": bool(data.get("keep_label"))}
+    if False in (args["component_ids"], args["addon_ids"], args["force"]):
+        return None
+    return args
+
+
+def _remove_pending(game_dir):
+    try:
+        os.remove(_pending_path(game_dir))
+    except OSError:
+        pass
 
 
 def short_name(name):
@@ -192,7 +235,13 @@ class EditionService:
         with self._start_lock:
             return self._start_apply_locked(game_dir, edition_id, component_ids, addon_ids)
 
-    def _start_apply_locked(self, game_dir, edition_id, component_ids, addon_ids=None):
+    def _running(self, game_dir):
+        return (self._is_running or gameutils.is_game_running)(game_dir)
+
+    def _start_apply_locked(self, game_dir, edition_id, component_ids, addon_ids=None, force=(), keep_label=False,
+                            reason="apply"):
+        """force — переустановить эти компоненты (файлы испорчены); keep_label — не менять
+        записанное издание (починка не превращает «Forever» в «Своё»)."""
         if self.busy():
             return False, "Изменения уже применяются"
         if not game_dir or not os.path.isdir(game_dir):
@@ -201,6 +250,8 @@ class EditionService:
             m = self.manifest()
         except content.ManifestError as e:
             return False, str(e)
+        if not self._running(game_dir):
+            content.recover(game_dir)  # план строится по клиенту — сначала откатить оборванную установку
         scope = "edition"
         if addon_ids is not None:
             target, label, scope = set(addon_ids), None, "addon"
@@ -212,19 +263,65 @@ class EditionService:
         else:
             target, label = set(component_ids or ()), "custom"
         state = content.load_state(game_dir)
+        if keep_label and scope == "edition":
+            label = state.get("edition") or "custom"
         status = content.component_status(m, game_dir, state)
+        for cid in force:
+            if cid in status and status[cid]["active"]:
+                status[cid]["outdated"] = True
         try:
             actions = content.plan(m, status, state, target, scope=scope)
         except content.PlanError as e:
             return False, str(e)
+        _write_pending(game_dir, {"edition_id": edition_id, "component_ids": sorted(component_ids or ()) or None,
+                                  "addon_ids": sorted(addon_ids) if addon_ids is not None else None,
+                                  "force": sorted(force), "keep_label": keep_label})
         with self._job_lock:
             self._job = {"state": "running", "stage": "prepare", "progress": 0, "text": "Подготовка…",
-                         "edition": label, "scope": scope}
+                         "edition": label, "scope": scope, "reason": reason}
         self._cancel.clear()
         self._thread = threading.Thread(target=self._run, args=(m, game_dir, state, actions, label),
                                         daemon=True)
         self._thread.start()
         return True, ""
+
+    def heal(self, game_dir):
+        """Привести клиент в порядок без участия игрока: откатить оборванную установку и продолжить её;
+        переустановить компоненты издания и аддоны, чьи файлы испортили. Возвращает
+        "resume" | "repair" | "ok" | "busy" | "skip" (нет игры, игра запущена, нет манифеста)."""
+        with self._start_lock:
+            if self.busy():
+                return "busy"
+            if not game_dir or not os.path.isdir(game_dir) or self._running(game_dir):
+                return "skip"
+            try:
+                m = self.manifest()
+            except content.ManifestError:
+                return "skip"
+            content.recover(game_dir)
+            pending = _read_pending(game_dir)
+            if pending is not None:
+                ok, _ = self._start_apply_locked(game_dir, reason="resume", **pending)
+                if ok:
+                    return "resume"
+                _remove_pending(game_dir)
+            state = content.load_state(game_dir)
+            broken, touched = content.find_broken(m, game_dir, state)
+            if touched:
+                content.save_state(game_dir, state)  # запомнили время проверенных файлов
+            if not broken:
+                return "ok"
+            status = content.component_status(m, game_dir, state)
+            by_id = {c.id: c for c in m.components}
+            for scope in ("edition", "addon"):
+                if not any(by_id[cid].scope == scope for cid in broken):
+                    continue
+                active = sorted(c.id for c in m.components if c.scope == scope and status[c.id]["active"])
+                ok, _ = self._start_apply_locked(
+                    game_dir, None, active if scope == "edition" else None, active if scope == "addon" else None,
+                    force=sorted(broken), keep_label=True, reason="repair")
+                return "repair" if ok else "skip"  # второй области — при следующей проверке
+            return "ok"
 
     def _executor(self, m, game_dir, state, progress):
         return content.Executor(m, game_dir, state, session=self._session_factory(), progress=progress,
@@ -254,6 +351,9 @@ class EditionService:
             self._set_job(state="error", error=str(e))
         except Exception as e:
             self._set_job(state="error", error=f"Непредвиденная ошибка: {e}")
+        # Установка закончилась (успех или обработанная ошибка): продолжать нечего.
+        # Если процесс упал раньше — pending.json остаётся, и heal() продолжит установку.
+        _remove_pending(game_dir)
 
     def _install_default_addons(self, m, game_dir, progress):
         """При первом выборе издания ставятся аддоны «по умолчанию»; дальше игрок решает сам."""
