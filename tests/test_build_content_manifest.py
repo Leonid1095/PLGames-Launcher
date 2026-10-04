@@ -76,6 +76,17 @@ class BuildContentManifestTests(unittest.TestCase):
             with open(os.path.join(self.out, layout, bcm.MANIFEST_NAME), encoding="utf-8") as f:
                 content.parse_manifest(json.load(f))
 
+    def test_publishes_client_index_next_to_manifest(self):
+        import clientrepair
+        index = clientrepair.index_from_rar(os.path.join(ROOT, "tests", "fixtures", "client-mini.rar"))
+        with open(os.path.join(self.tmp, clientrepair.INDEX_NAME), "w", encoding="utf-8") as f:
+            json.dump(index, f)
+        self._write(src_manifest())
+        bcm.build(self.src, self.out, server_base="https://srv.test/c/", github_base="https://gh.test/r/")
+        for layout in ("server", "github"):
+            with open(os.path.join(self.out, layout, clientrepair.INDEX_NAME), encoding="utf-8") as f:
+                self.assertEqual(clientrepair.parse_index(json.load(f))["files"][0]["path"], "Data/realmlist.wtf")
+
     def test_refuses_manifest_the_launcher_would_reject(self):
         self._write(src_manifest(image="http://insecure/img.jpg"))
         with self.assertRaises(content.ManifestError):

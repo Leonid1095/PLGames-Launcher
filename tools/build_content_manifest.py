@@ -25,6 +25,7 @@ import sys
 from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import clientrepair  # noqa: E402
 import content  # noqa: E402
 
 SERVER_BASE = "https://plgames-wow.ru/launcher/content/"
@@ -97,6 +98,14 @@ def build(src_path, out_dir, server_base=SERVER_BASE, github_base=GITHUB_BASE, e
     for layout_dir in (server_dir, github_dir):
         with open(os.path.join(layout_dir, MANIFEST_NAME), "w", encoding="utf-8") as f:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    # Индекс архива клиента (tools/build_client_index.py) публикуется рядом с манифестом
+    index_src = os.path.join(root, clientrepair.INDEX_NAME)
+    if os.path.isfile(index_src):
+        with open(index_src, encoding="utf-8") as f:
+            clientrepair.parse_index(json.load(f))
+        for layout_dir in (server_dir, github_dir):
+            shutil.copyfile(index_src, os.path.join(layout_dir, clientrepair.INDEX_NAME))
     return manifest
 
 

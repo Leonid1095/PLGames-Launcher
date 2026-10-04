@@ -5,3 +5,4 @@
 *.png binary
 # Файлы контента изданий: байты неизменны (их SHA-256 записаны в манифесте)
 content/files/** -text
+*.rar binary
