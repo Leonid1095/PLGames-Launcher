@@ -1,7 +1,7 @@
 # ⚔ PLGames Launcher
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.5.0-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.1-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10+-yellow?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square&logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
@@ -87,6 +87,7 @@ PLGames Launcher
       "full_name": "Realm Chronos",
       "subtitle": "WotLK 3.3.5a",
       "status_url": "https://server.com/api/status",
+      "tabs": ["play", "editions", "addons", "news", "settings"],
       "banners": [
         {"image": "https://...", "title": "Phase 2!"}
       ],
@@ -100,6 +101,12 @@ PLGames Launcher
 
 Добавил проект в JSON на сервере — он автоматически появился в лаунчере у всех пользователей.
 
+`tabs` — вкладки верхнего меню этой игры и их порядок: `play`, `editions`, `addons`, `news`, `settings`.
+Без поля — все, что игре доступны. Неизвестные отбрасываются; `editions` и `addons` остаются только у игр,
+для которых издания включены в самом лаунчере (`"editions": true` в `PROJECTS`) — сервер не может
+включить их чужой игре; «Играть» и «Настройки» есть всегда. При смене игры меню перестраивается,
+а если открытой вкладки у новой игры нет — открывается её первая.
+
 ## Установка клиента
 
 1. «Установить» → торрент `PLGames_Wow3.3.5.torrent` (aria2c) скачивает `PLGames_Wow3.3.5.rar`.
@@ -111,6 +118,25 @@ PLGames Launcher
    (оставьте его для раздачи) и открывает вкладку «Издания».
 
 Если архив уже скачан вручную — «Уже скачали архив клиента? Распаковать…» в панели «Путь к игре».
+
+В торренте есть web seed (`url-list`, BEP 19): `https://plgames-wow.ru/launcher/client/PLGames_Wow3.3.5.rar` —
+aria2c качает и у раздающих, и с сервера, поэтому клиент доступен, даже когда никто не раздаёт. Поле лежит вне
+`info`, info-hash прежний (`tools/torrent_webseed.py` это проверяет).
+
+## Самовосстановление
+
+| Что | Как |
+|---|---|
+| Новая версия лаунчера не поднялась | `_update.bat` ждёт отметку `%APPDATA%\PLGamesLauncher\update-ok` (её пишет `ui_ready()`, когда открылся интерфейс). Процесс умер без неё или висит 3 минуты — прежняя версия возвращается из `.bak`, версия пишется в `update-failed.json` и больше не предлагается; игрок видит сообщение. Работает с обновлений, которые ставит 0.5.1 |
+| Лаунчер или ПК упал посреди установки издания | Изменения клиента (переносы файлов, MPQ, Config.wtf, установщик Northlight) пишутся в `PLGames\apply-journal.json` после каждого шага, что ставилось — в `PLGames\pending.json`. При следующем запуске журнал откатывается, установка начинается заново; скачанное берётся из кэша |
+| Файлы издания или аддонов испортили | При установке запоминаются размер и время изменения; при запуске лаунчера и перед игрой сверяются они, SHA-256 — только если время другое. Испорченное ставится заново, издание не меняется |
+| Файлы клиента | Перед игрой — быстрая проверка (размеры, CRC32 `Wow.exe`, меньше секунды), в «Настройках» — «Проверить и починить» (CRC32 всех файлов, 1–3 мин). Битый файл берётся из архива на диске или кусочком (`Range`) из архива на сервере: кусок RAR5 + заголовки = самостоятельный мини-архив (`rar5.py`) |
+
+Индекс клиента `content/client-index.json` (379 файлов: размер, CRC32, место в архиве) строится
+`python tools/build_client_index.py --rar <архив клиента>` и публикуется вместе с манифестом. Не считаются
+поломкой: `WTF/`, `Interface/`, `Cache/`, `Logs/`, `Errors/`, `Screenshots/`, `realmlist.wtf`, портативный
+лаунчер внутри раздачи, MPQ, выключенные изданием (`*.disabled`). Что сделать на сервере —
+`docs/server-launcher-files.md`.
 
 ## Графические издания
 
@@ -269,8 +295,8 @@ build.bat
 
 Для релиза:
 ```bash
-git tag v0.4.0
-git push origin v0.4.0   # CI: тесты → сборка → релиз с PLGamesLauncher.exe и торрентом
+git tag v0.5.1
+git push origin v0.5.1   # CI: тесты → сборка → релиз с PLGamesLauncher.exe и торрентом
 ```
 
 ⚠️ В релизе лаунчера должен быть ровно один `.exe` — сам лаунчер. Версии до 0.4.0 берут первый

@@ -17,15 +17,17 @@ import hashlib
 from urllib.parse import urlparse
 
 import client_install
+import clientrepair
 import content
-from editions import EditionService
+import gameutils
+from editions import EditionService, _requests_session
 from gameutils import safe_join as _safe_join, read_config_wtf, write_config_wtf
 
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
 
-LAUNCHER_VERSION = "0.5.0"
+LAUNCHER_VERSION = "0.5.1"
 API_BASE = "https://plgames-wow.ru"
 API_AUTH = "https://plgames-wow.ru"
 MANIFEST_URL = f"{API_BASE}/api/launcher/manifest"
@@ -79,29 +81,6 @@ PROJECTS = [
             "spellEffectLevel":   {"label": "Эффекты заклинаний", "type": "select", "opts": ["0","1","2","3","4","5","6"]},
         },
     },
-    {
-        "id": "windrose",
-        "name": "Windrose",
-        "icon_url": "",
-        "full_name": "Вольная Гавань",
-        "subtitle": "Кооп-пиратская RPG",
-        "type": "Windrose Server",
-        "description": {"ru": "Открытый сервер PLGames. До 10 игроков, регион CIS. Рестарт каждый день в 00:00 МСК.", "en": "PLGames open server. Up to 10 players, CIS region. Daily restart at 00:00 MSK."},
-        "bg_images": [
-            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_c3985ad9d779aa24d443732c0d8504922b397f06.1920x1080.jpg",
-            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_bb545eccc15b1de9e1785998735748b3b0f30837.1920x1080.jpg",
-            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2372710/ss_29fb1ec7455ef721b1a40d493e728f15f8e64900.1920x1080.jpg",
-        ],
-        "invite_code": "PLGames",
-        "connection_info": {
-            "type": "invite_code",
-            "code": "PLGames",
-            "instructions": "Play → Connect to Server → ввести код",
-        },
-        "realmlist": "", "exe": "", "realmlist_paths": [],
-        "news_url": "", "status_url": "",
-        "graphic_settings": {},
-    },
 ]
 
 # pywebview 5.x: FileDialog.*; старые константы *_DIALOG объявлены устаревшими.
@@ -109,6 +88,31 @@ _FOLDER_DIALOG = webview.FileDialog.FOLDER if hasattr(webview, "FileDialog") els
 _OPEN_DIALOG = webview.FileDialog.OPEN if hasattr(webview, "FileDialog") else webview.OPEN_DIALOG
 
 RESOLUTIONS = ["800x600","1024x768","1280x720","1280x1024","1366x768","1600x900","1920x1080","2560x1440","3840x2160"]
+
+# ---------------------------------------------------------------------------
+# Вкладки верхнего меню — свои у каждой игры
+# ---------------------------------------------------------------------------
+
+TAB_IDS = ("play", "editions", "addons", "news", "settings")
+_EDITION_TABS = ("editions", "addons")
+
+
+def project_tabs(proj):
+    """Вкладки игры: свой список "tabs" (из серверного манифеста или PROJECTS) или по умолчанию.
+    Неизвестные id отбрасываются. «Издания» и «Аддоны» — только у игр с изданиями: их делает
+    лаунчер, и сервер не может включить их чужой игре. «Играть» и «Настройки» (путь к игре) есть всегда."""
+    raw = proj.get("tabs")
+    if not isinstance(raw, list) or not raw:
+        raw = list(TAB_IDS)
+    tabs = []
+    for t in raw:
+        if t in TAB_IDS and t not in tabs and (t not in _EDITION_TABS or proj.get("editions")):
+            tabs.append(t)
+    if "play" not in tabs:
+        tabs.insert(0, "play")
+    if "settings" not in tabs:
+        tabs.append("settings")
+    return tabs
 
 # ---------------------------------------------------------------------------
 # MANIFEST (server-driven project list)
@@ -119,7 +123,7 @@ def fetch_manifest():
     Server provides: id, name, full_name, subtitle, type, description,
                      realmlist, exe, realmlist_paths, status_url, news_feed_url,
                      sso_start_url, sso_poll_url, credentials_url, reset_password_url,
-                     profile_url, banners, news
+                     profile_url, banners, news, tabs (вкладки меню, см. project_tabs)
     Local provides:  graphic_settings, torrent_url/torrent_folder, client_archive,
                      editions (client-side only)
     """
@@ -161,6 +165,8 @@ def fetch_manifest():
                     # Server-only dynamic content
                     "banners": sp.get("banners", []),
                     "news": sp.get("news", []),
+                    # Вкладки игры (сервер может задать свои; проверяет project_tabs)
+                    "tabs": sp.get("tabs", local.get("tabs")),
                     # Client-only fields (local wins)
                     "graphic_settings": local.get("graphic_settings", sp.get("graphic_settings", {})),
                     "torrent_url": local.get("torrent_url", sp.get("torrent_url", "")),
@@ -244,6 +250,66 @@ def _pick_update_asset(assets):
 
 def _appdata_dir():
     return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "PLGamesLauncher")
+
+def _update_marker():
+    """Отметка «новая версия поднялась»: её пишет ui_ready(), её ждёт скрипт обновления."""
+    return os.path.join(_appdata_dir(), "update-ok")
+
+def _update_failed_path():
+    return os.path.join(_appdata_dir(), "update-failed.json")
+
+def _failed_update():
+    """{"version", "shown"?} версии, которая не поднялась и была откачена, или {}."""
+    try:
+        with open(_update_failed_path(), encoding="utf-8-sig") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) and isinstance(data.get("version"), str) else {}
+    except (OSError, ValueError):
+        return {}
+
+def _update_script(current_exe, update_path, backup, marker, failed_file, version,
+                   wait_seconds=180, grace_seconds=6, settle_pings=4):
+    """Текст _update.bat. Заменить exe обновлением и запустить; ждать отметку marker (лаунчер пишет её,
+    когда поднялся интерфейс). Процесс умер без отметки или не поднялся за wait_seconds — снять его,
+    вернуть прежнюю версию из backup, записать версию в failed_file и запустить прежнюю.
+    Скрипт идёт без окна: никаких pause — их некому нажать."""
+    exe_name = os.path.basename(current_exe)
+    lines = [
+        "@echo off",
+        "chcp 65001 >nul",                                   # пути с кириллицей
+        f"ping -n {settle_pings} 127.0.0.1 >nul",            # старый лаунчер закрывается
+        f'del "{backup}" 2>nul',
+        f'del "{marker}" 2>nul',
+        f'move /Y "{current_exe}" "{backup}"',
+        "if errorlevel 1 exit /b 1",
+        f'move /Y "{update_path}" "{current_exe}"',
+        "if errorlevel 1 (",
+        f'  move /Y "{backup}" "{current_exe}" 2>nul',
+        f'  start "" "{current_exe}"',
+        "  exit /b 1",
+        ")",
+        f'start "" "{current_exe}"',
+        "set /a waited=0",
+        ":wait",
+        f'if exist "{marker}" goto ok',
+        f"if %waited% lss {grace_seconds} goto sleep",
+        f'tasklist /FI "IMAGENAME eq {exe_name}" /NH | find /I "{exe_name}" >nul',
+        "if errorlevel 1 goto rollback",
+        ":sleep",
+        "ping -n 3 127.0.0.1 >nul",
+        "set /a waited+=2",
+        f"if %waited% lss {wait_seconds} goto wait",
+        ":rollback",
+        f'taskkill /F /IM "{exe_name}" >nul 2>&1',
+        "ping -n 3 127.0.0.1 >nul",
+        f'del "{current_exe}" 2>nul',
+        f'move /Y "{backup}" "{current_exe}"',
+        f'> "{failed_file}" echo {{"version": "{version}"}}',
+        f'start "" "{current_exe}"',
+        ":ok",
+        'del "%~f0"',
+    ]
+    return "\r\n".join(lines) + "\r\n"
 
 def _bare_filename(name):
     """Имя файла без каталогов (значения из серверного манифеста), иначе ""."""
@@ -718,6 +784,12 @@ class Api:
                                         _bundled("content_default.json"), session_factory=session_factory,
                                         bundled_addons_dir=_addons_src_dir())
         self._editions.preload()
+        # Индекс архива клиента лежит рядом с манифестом изданий (сервер → GitHub → кэш)
+        self._index_urls = [u.rsplit("/", 1)[0] + "/" + clientrepair.INDEX_NAME for u in urls]
+        self._content_session = session_factory or _requests_session
+        self._client_index = None
+        self._client_job = clientrepair.ClientJob()
+        threading.Thread(target=self._background_heal, daemon=True).start()
 
     def get_projects(self):
         return json.dumps([{
@@ -728,6 +800,7 @@ class Api:
             "bg_images": p.get("bg_images", []),
             "connection_info": p.get("connection_info"),
             "has_editions": bool(p.get("editions")),
+            "tabs": project_tabs(p),
         } for p in self.projects])
 
     def _proj(self, pid):
@@ -777,7 +850,7 @@ class Api:
             return path
         return ""
 
-    def launch_game(self, pid):
+    def launch_game(self, pid, skip_client_check=False):
         proj = next((p for p in self.projects if p["id"] == pid), None)
         if not proj or not proj.get("exe"):
             return json.dumps({"ok": False, "msg": "Нет исполняемого файла"})
@@ -798,6 +871,23 @@ class Api:
             return json.dumps({"ok": False, "msg": "Укажите папку с игрой"})
         if self._editions.busy():
             return json.dumps({"ok": False, "msg": "Дождитесь окончания смены издания"})
+        if self._client_job.busy():
+            return json.dumps({"ok": False, "msg": "Дождитесь окончания проверки файлов игры"})
+
+        if proj.get("editions"):
+            # Перед игрой: испорченные файлы издания/аддонов — переустановить, оборванную установку — доделать
+            if self._editions.heal(gp) in ("resume", "repair"):
+                return json.dumps({"ok": False, "healing": True,
+                                   "msg": "Восстанавливаем файлы издания — игра запустится сама"})
+            # Быстрая проверка клиента (размеры всех файлов и Wow.exe): меньше секунды
+            index = self._client_index
+            if index and not skip_client_check:
+                problems = clientrepair.check(gp, index)
+                if problems:
+                    names = ", ".join(p["path"] for p in problems[:3]) + ("…" if len(problems) > 3 else "")
+                    return json.dumps({"ok": False, "need_repair": True, "count": len(problems),
+                                       "msg": f"Повреждены или пропали файлы игры ({len(problems)}): {names}. "
+                                              "Починить сейчас?"})
 
         if proj.get("realmlist"):
             set_realmlist(gp, proj["realmlist"], proj["realmlist_paths"])
@@ -885,12 +975,7 @@ class Api:
                             return json.dumps({"news": news})
             except Exception:
                 pass
-        # Fallback per project
-        if pid == "windrose":
-            return json.dumps({"news": [
-                {"tag": "Анонс", "title": "PLGames | Вольная Гавань", "text": "Открытый сервер Windrose. До 10 игроков, регион CIS. Рестарт 00:00 МСК.", "date": "2026-04-23"},
-                {"tag": "Событие", "title": "Как подключиться", "text": "Play → Connect to Server → код: PLGames", "date": "2026-04-23"},
-            ]})
+        # Fallback
         return json.dumps({"news": [
             {"tag": "Анонс", "title": "Realm Chronos", "text": "THE FROZEN THRONE AWAITS", "date": "2026-03-07"},
         ]})
@@ -996,9 +1081,66 @@ class Api:
         proj = self._proj(pid)
         gp = self.settings.get("game_paths", {}).get(pid, "")
         name = _bare_filename((proj or {}).get("client_archive", ""))
-        if name and gp and os.path.isfile(os.path.join(gp, name)):
-            return os.path.join(gp, name)
+        # архив качается в папку игры или рядом с ней (распаковка кладёт клиент в подпапку)
+        for folder in (gp, os.path.dirname(gp) if gp else ""):
+            if name and folder and os.path.isfile(os.path.join(folder, name)):
+                return os.path.join(folder, name)
         return ""
+
+    # ---- самовосстановление: издание, аддоны, файлы клиента ----
+
+    def _load_client_index(self):
+        if self._client_index is None:
+            self._client_index = clientrepair.load_index(
+                self._index_urls, os.path.join(_appdata_dir(), clientrepair.INDEX_NAME), self._content_session())
+        return self._client_index
+
+    def _background_heal(self):
+        """При старте: индекс клиента в фон; оборванная установка издания продолжается, испорченные
+        файлы издания и аддонов ставятся заново — игроку ничего нажимать не нужно."""
+        try:
+            self._load_client_index()
+        except Exception:
+            pass
+        for proj in self.projects:
+            gp = self.settings.get("game_paths", {}).get(proj["id"], "")
+            if proj.get("editions") and gp:
+                try:
+                    self._editions.heal(gp)
+                except Exception:
+                    pass
+
+    def _repair_sources(self, pid, gp, index):
+        sources = []
+        for path in (self._client_archive_path(pid), os.path.join(os.path.dirname(gp), index["archive"])):
+            if path and os.path.isfile(path) and path not in [s.path for s in sources]:
+                sources.append(clientrepair.LocalArchive(path, index))
+        sources.append(clientrepair.HttpArchive([f"{API_BASE}/launcher/client/{index['archive']}"],
+                                                self._content_session()))
+        return sources
+
+    def repair_client(self, pid, full=True):
+        """Проверить файлы клиента (full — по CRC32 всех, иначе быстро) и починить найденное."""
+        proj = self._proj(pid)
+        gp = self.settings.get("game_paths", {}).get(pid, "")
+        if not proj or not proj.get("editions") or not gp or not os.path.isdir(gp):
+            return json.dumps({"ok": False, "msg": "Сначала укажите папку с игрой"})
+        if self._editions.busy():
+            return json.dumps({"ok": False, "msg": "Дождитесь окончания смены издания"})
+        if gameutils.is_game_running(gp):
+            return json.dumps({"ok": False, "msg": "Закройте игру, чтобы проверить файлы"})
+        index = self._load_client_index()
+        if not index:
+            return json.dumps({"ok": False, "msg": "Не удалось получить список файлов клиента — проверьте интернет"})
+        ok, msg = self._client_job.start(gp, index, lambda: self._repair_sources(pid, gp, index), full=bool(full))
+        return json.dumps({"ok": ok, "msg": msg})
+
+    def get_client_status(self):
+        return json.dumps(self._client_job.status())
+
+    def cancel_client_job(self):
+        self._client_job.cancel()
+        return json.dumps({"ok": True})
 
     def start_extract(self, pid, archive=""):
         archive = archive or self._client_archive_path(pid)
@@ -1236,6 +1378,30 @@ class Api:
     def get_version(self):
         return LAUNCHER_VERSION
 
+    def ui_ready(self):
+        """Интерфейс поднялся: отметка для скрипта обновления (иначе он вернёт прежнюю версию)."""
+        try:
+            os.makedirs(_appdata_dir(), exist_ok=True)
+            with open(_update_marker(), "w", encoding="utf-8") as f:
+                f.write(LAUNCHER_VERSION)
+        except OSError:
+            pass
+        return json.dumps({"ok": True})
+
+    def get_update_notice(self):
+        """Один раз после отката: какая версия не запустилась."""
+        failed = _failed_update()
+        if not failed or failed.get("shown"):
+            return json.dumps({"msg": ""})
+        failed["shown"] = True
+        try:
+            with open(_update_failed_path(), "w", encoding="utf-8") as f:
+                json.dump(failed, f)
+        except OSError:
+            pass
+        return json.dumps({"msg": f"Обновление до версии {failed['version']} не запустилось — "
+                                  "лаунчер вернул прежнюю версию. Предложим обновиться, когда выйдет исправление."})
+
     def check_update(self):
         """Check for newer version via server API first, then GitHub Releases."""
         import requests
@@ -1255,6 +1421,8 @@ class Api:
         # Expected hash for the next downloaded update (set if the server provides
         # one). Reset on every check so a stale value can't be reused.
         self._update_sha256 = ""
+        # Версия, которая уже не поднялась и была откачена, больше не предлагается
+        skipped = _failed_update().get("version", "")
 
         # --- Try our own server first (avoids GitHub DNS issues) ---
         try:
@@ -1262,7 +1430,8 @@ class Api:
             if r.status_code == 200:
                 data = r.json()
                 remote_ver = str(data.get("version", "")).lstrip("v")
-                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
+                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION) and remote_ver != skipped:
+                    self._update_latest = remote_ver
                     self._update_sha256 = str(data.get("sha256", "")).lower().strip()
                     return json.dumps({
                         "has_update": True,
@@ -1282,7 +1451,8 @@ class Api:
                 data = r.json()
                 tag = data.get("tag_name", "")
                 remote_ver = tag.lstrip("v")
-                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION):
+                if remote_ver and _is_newer(remote_ver, LAUNCHER_VERSION) and remote_ver != skipped:
+                    self._update_latest = remote_ver
                     download_url = _pick_update_asset(data.get("assets", []))
                     return json.dumps({
                         "has_update": True,
@@ -1442,31 +1612,20 @@ class Api:
             if getattr(sys, 'frozen', False):
                 current_exe = sys.executable
                 backup = current_exe + ".bak"
+                marker, failed = _update_marker(), _update_failed_path()
+                version = re.sub(r"[^0-9A-Za-z.\-]", "", getattr(self, "_update_latest", "") or "?")
                 # Validate paths contain no batch-breaking characters
-                for p in (current_exe, update_path, backup):
-                    if any(c in p for c in '&|<>^%!'):
+                for p in (current_exe, update_path, backup, marker, failed):
+                    if any(c in p for c in '&|<>^%!"'):
                         return json.dumps({"ok": False, "msg": "Путь содержит недопустимые символы. Переместите лаунчер в папку без спецсимволов."})
+                os.makedirs(os.path.dirname(marker), exist_ok=True)
+                try:
+                    os.remove(marker)
+                except OSError:
+                    pass
                 bat = os.path.join(os.path.dirname(current_exe), "_update.bat")
-                with open(bat, "w", encoding="utf-8") as f:
-                    f.write('@echo off\r\n')
-                    f.write('echo Обновление PLGames Launcher...\r\n')
-                    f.write('timeout /t 3 /nobreak >nul\r\n')
-                    f.write(f'del "{backup}" 2>nul\r\n')
-                    f.write(f'move /Y "{current_exe}" "{backup}"\r\n')
-                    f.write('if errorlevel 1 (\r\n')
-                    f.write('  echo Ошибка: не удалось переименовать текущий файл\r\n')
-                    f.write('  pause\r\n')
-                    f.write('  exit /b 1\r\n')
-                    f.write(')\r\n')
-                    f.write(f'move /Y "{update_path}" "{current_exe}"\r\n')
-                    f.write('if errorlevel 1 (\r\n')
-                    f.write('  echo Ошибка: не удалось переместить обновление\r\n')
-                    f.write(f'  move /Y "{backup}" "{current_exe}" 2>nul\r\n')
-                    f.write('  pause\r\n')
-                    f.write('  exit /b 1\r\n')
-                    f.write(')\r\n')
-                    f.write(f'start "" "{current_exe}"\r\n')
-                    f.write('del "%~f0"\r\n')
+                with open(bat, "w", encoding="utf-8", newline="") as f:
+                    f.write(_update_script(current_exe, update_path, backup, marker, failed, version))
                 _seed_mgr.stop()
                 subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
                 self._window.destroy()
@@ -2580,6 +2739,13 @@ async function init() {
   selectProject(activePid, false);
   startHeroSlider();
   loadAuthState();
+
+  // Интерфейс поднялся — отметка для скрипта обновления (без неё он вернёт прежнюю версию)
+  try { await pywebview.api.ui_ready(); } catch(e) {}
+  try {
+    const notice = JSON.parse(await pywebview.api.get_update_notice());
+    if (notice.msg) alert(notice.msg);
+  } catch(e) {}
 }
 
 async function selectProject(pid, save=true) {
@@ -2590,15 +2756,16 @@ async function selectProject(pid, save=true) {
     b.classList.toggle('active', b.dataset.pid === activeProject.id);
   });
 
-  // Вкладка «Издания» — только у проектов с графическими изданиями (WoW)
-  document.getElementById('nav-editions').style.display = activeProject.has_editions ? '' : 'none';
-  document.getElementById('nav-addons').style.display = activeProject.has_editions ? '' : 'none';
+  // Верхнее меню — вкладки этой игры, в её порядке (project_tabs на стороне Python)
+  const pages = projectPages();
+  const nav = document.querySelector('.topbar-nav');
+  nav.querySelectorAll('.topbar-nav-btn').forEach(b => { b.style.display = pages.includes(b.dataset.page) ? '' : 'none'; });
+  pages.forEach(pg => { const b = nav.querySelector(`.topbar-nav-btn[data-page="${pg}"]`); if (b) nav.appendChild(b); });
   document.getElementById('hero-graphics-label').textContent =
-    activeProject.has_editions ? 'Графические издания' : 'Настройки';
-  const edBox = document.getElementById('editions-content');
-  delete edBox.dataset.loaded;
+    pages.includes('editions') ? 'Графические издания' : 'Настройки';
+  ['editions-content', 'addons-content'].forEach(id => { delete document.getElementById(id).dataset.loaded; });
   edView = null;
-  if (!activeProject.has_editions && currentPage === 'editions') showPage('games');
+  if (!pages.includes(currentPage)) showPage(pages[0]);
 
   // Update hero images from project or news
   HERO_IMAGES = (activeProject.bg_images && activeProject.bg_images.length)
@@ -2613,7 +2780,16 @@ async function selectProject(pid, save=true) {
   startHeroSlider();
 }
 
+const TAB_PAGE = {play: 'games', editions: 'editions', addons: 'addons', news: 'news', settings: 'settings'};
+
+function projectPages() {
+  const tabs = (activeProject && activeProject.tabs) || ['play', 'news', 'settings'];
+  return tabs.map(t => TAB_PAGE[t]).filter(Boolean);
+}
+
 function showPage(page) {
+  const pages = projectPages();
+  if (!pages.includes(page)) page = pages[0];  // у этой игры такой вкладки нет
   currentPage = page;
   document.querySelectorAll('.topbar-nav-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.page === page);
@@ -2635,7 +2811,7 @@ function showPage(page) {
 }
 
 function openGraphics() {
-  showPage(activeProject && activeProject.has_editions ? 'editions' : 'settings');
+  showPage(projectPages().includes('editions') ? 'editions' : 'settings');
 }
 
 // ==================== HERO SLIDER ====================
@@ -2767,17 +2943,71 @@ async function browsePath() {
   }
 }
 
-async function launchGame() {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Ждать фоновую работу, показывая её текст; вернуть итоговый статус
+async function waitJob(statusCall, msgEl) {
+  while (true) {
+    let s = null;
+    try { s = JSON.parse(await statusCall()); } catch(e) {}
+    if (!s || s.state !== 'running') return s || {state: 'error', error: 'Нет ответа'};
+    if (msgEl) { msgEl.textContent = s.text || 'Подождите…'; msgEl.style.color = 'var(--accent)'; }
+    await sleep(500);
+  }
+}
+
+const skipClientCheck = {};  // игрок отказался чинить или починка не удалась — до перезапуска лаунчера не спрашиваем
+
+async function launchGame(retry = false) {
   const btn = document.getElementById('btn-play');
   const msg = document.getElementById('launch-msg');
   btn.disabled = true;
   msg.textContent = 'Запуск...';
   msg.style.color = 'var(--accent)';
 
-  const res = JSON.parse(await pywebview.api.launch_game(activeProject.id));
+  const res = JSON.parse(await pywebview.api.launch_game(activeProject.id, !!skipClientCheck[activeProject.id]));
+  if (res.healing && !retry) {
+    // лаунчер сам доставляет испорченные файлы издания и аддонов, потом запускает игру
+    const s = await waitJob(() => pywebview.api.get_edition_status(), msg);
+    if (s.state === 'finished') return launchGame(true);
+    msg.textContent = s.error || 'Не удалось восстановить файлы издания';
+    msg.style.color = 'var(--red)';
+    btn.disabled = false;
+    return;
+  }
+  if (res.need_repair && !retry) {
+    if (confirm(res.msg)) {
+      const r = JSON.parse(await pywebview.api.repair_client(activeProject.id, false));
+      const s = r.ok ? await waitJob(() => pywebview.api.get_client_status(), msg) : {state: 'error', error: r.msg};
+      if (s.state === 'finished') return launchGame(true);
+      if (!confirm((s.error || 'Не удалось починить файлы') + '\n\nЗапустить игру всё равно?')) {
+        msg.textContent = s.error || 'Не удалось починить файлы';
+        msg.style.color = 'var(--red)';
+        btn.disabled = false;
+        return;
+      }
+    }
+    skipClientCheck[activeProject.id] = true;
+    return launchGame(true);
+  }
   msg.textContent = res.msg;
   msg.style.color = res.ok ? 'var(--green)' : 'var(--red)';
   btn.disabled = false;
+}
+
+async function checkClient() {
+  const btn = document.getElementById('client-check-btn');
+  const text = document.getElementById('client-check-text');
+  if (btn.dataset.running) { await pywebview.api.cancel_client_job(); return; }
+  const r = JSON.parse(await pywebview.api.repair_client(activeProject.id, true));
+  if (!r.ok) { text.textContent = r.msg; text.style.color = 'var(--red)'; return; }
+  btn.dataset.running = '1';
+  btn.textContent = 'Отменить';
+  const s = await waitJob(() => pywebview.api.get_client_status(), text);
+  delete btn.dataset.running;
+  btn.textContent = 'Проверить и починить';
+  text.textContent = s.state === 'finished' ? s.text : (s.error || 'Проверка не удалась');
+  text.style.color = s.state === 'finished' ? 'var(--green)' : 'var(--red)';
 }
 
 function copyInviteCode() {
@@ -2892,6 +3122,10 @@ async function loadSettings() {
         <div class="setting-row"><span class="setting-label">Сейчас: <b>${esc(editionName(v.active))}</b></span>
         <div class="setting-right"><button class="path-browse" onclick="showPage('editions')">Выбрать издание</button></div></div>
         <p style="color:var(--text-sec);font-size:11px;margin-top:6px">Переключатели ниже собирают издание «Своё». Изменения применяются сразу; игра должна быть закрыта.</p></div>`;
+      container.innerHTML += `<div class="settings-section"><h3>Файлы игры</h3>
+        <div class="setting-row"><span class="setting-label">Проверить, что файлы клиента целы, и починить испорченные</span>
+        <div class="setting-right"><button class="path-browse" id="client-check-btn" onclick="checkClient()">Проверить и починить</button></div></div>
+        <p id="client-check-text" style="color:var(--text-sec);font-size:11px;margin-top:6px">Полная проверка — 1–3 минуты. Битые файлы берутся из архива клиента на диске или с сервера, качается только нужное.</p></div>`;
       const groups = {};
       v.components.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
       for (const [group, list] of Object.entries(groups)) {
